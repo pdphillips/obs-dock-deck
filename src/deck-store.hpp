@@ -45,6 +45,11 @@ struct Deck {
 	// so placeholders for missing docks can show a friendly name. Optional:
 	// decks saved before 0.2.2 have no titles.
 	QHash<QString, QString> titles;
+
+	// Locked decks can't be rearranged (docks can't be moved, resized,
+	// floated or closed) and are never auto-saved. Optional in files: decks
+	// saved before 0.3.0 are unlocked.
+	bool locked = false;
 };
 
 // Export/import of decks to a standalone JSON file, so they can be shared

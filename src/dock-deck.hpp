@@ -75,6 +75,14 @@ private:
 	void adoptRealDocks();
 	void setShowPlaceholders(bool enabled);
 	void captureActive();
+
+	// Deck locking (see dock-deck.cpp). applyLock() makes the docks match
+	// the given deck's lock plus OBS's own Docks > Lock Docks.
+	void applyLock(const Deck *deck);
+	void updateLock();
+	bool obsDocksLocked() const;
+	void toggleLock(const QString &name);
+	void setAllLocked(bool locked);
 	void saveConfig();
 	void scheduleRefresh();
 	void refreshUi();
@@ -105,6 +113,9 @@ private:
 	bool applying_ = false; // re-entrancy guard for switchToDeck()
 	bool refreshQueued_ = false;
 	bool adoptQueued_ = false;
+	bool lockQueued_ = false;
+	bool locked_ = false;             // active deck locked, or OBS's Lock Docks is on
+	QPointer<QAction> obsLockAction_; // OBS's Docks > Lock Docks
 
 	// objectName -> placeholder dock currently standing in for it.
 	QHash<QString, QPointer<QDockWidget>> placeholders_;

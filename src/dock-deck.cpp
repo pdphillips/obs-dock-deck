@@ -34,6 +34,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QInputDialog>
 #include <QLabel>
 #include <QMainWindow>
+#include <QMouseEvent>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
@@ -47,6 +48,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 // Marks our own stand-in docks so they are never mistaken for real ones.
 static constexpr const char *kPlaceholderProperty = "dockDeckPlaceholder";
+
+// A locked deck stores each dock's own features here while they are off.
+static constexpr const char *kSavedFeaturesProperty = "dockDeckSavedFeatures";
 
 static bool isPlaceholder(const QObject *obj)
 {
@@ -122,6 +126,7 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 	connect(strip_, &DeckStrip::exportRequested, this, [this](const QString &name) { exportDecks(name); });
 	connect(strip_, &DeckStrip::hideRequested, this, [this]() { setTabStripVisible(false); });
 	connect(strip_, &DeckStrip::deckMoved, this, &DockDeck::moveDeck);
+	connect(strip_, &DeckStrip::lockToggled, this, &DockDeck::toggleLock);
 
 	// Tools > Dock Deck submenu (switch decks, toggle the strip, options).
 	// It is rebuilt each time it opens so it always matches the deck list.
@@ -130,6 +135,17 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 		toolsMenu_ = new QMenu(main_);
 		toolsAction_->setMenu(toolsMenu_);
 		connect(toolsMenu_, &QMenu::aboutToShow, this, &DockDeck::rebuildToolsMenu);
+	}
+
+	// OBS's own Docks > Lock Docks. A deck counts as locked if either that
+	// or the deck's own lock is on. OBS sets dock features in its toggled
+	// slot; we re-assert ours right after it (queued).
+	obsLockAction_ = main_->findChild<QAction *>(QStringLiteral("lockDocks"));
+	if (obsLockAction_) {
+		connect(obsLockAction_, &QAction::toggled, this,
+			[this]() { QTimer::singleShot(0, this, &DockDeck::updateLock); });
+	} else {
+		obs_log(LOG_INFO, "OBS 'Lock Docks' action not found; only per-deck locks apply");
 	}
 
 	// Watch the main window's Close event: it arrives before OBS tears down
@@ -288,6 +304,8 @@ void DockDeck::apply(const Deck &deck)
 	// The strip is part of saveState(), so put it back the way the user wants.
 	if (strip_)
 		strip_->setVisible(store_.showTabStrip);
+
+	applyLock(&deck);
 }
 
 // ---------------------------------------------------------------------------
@@ -465,6 +483,7 @@ void DockDeck::adoptRealDocks()
 	}
 	if (strip_)
 		strip_->setVisible(store_.showTabStrip);
+	updateLock(); // the real docks must not be movable in a locked deck
 
 	if (store_.autoSave) {
 		captureActive();
@@ -495,6 +514,9 @@ void DockDeck::setShowPlaceholders(bool enabled)
 
 void DockDeck::captureActive()
 {
+	// Locked (by the deck or by OBS's Lock Docks): never auto-save.
+	if (locked_)
+		return;
 	Deck *active = store_.find(store_.active);
 	if (active)
 		*active = capture(active->name, active);
@@ -523,6 +545,7 @@ void DockDeck::onFinishedLoading()
 		ready_ = true;
 		if (strip_)
 			strip_->setVisible(store_.showTabStrip);
+		updateLock(); // also covers the first run, where nothing was applied
 		saveConfig();
 		refreshUi();
 	});
@@ -542,9 +565,39 @@ bool DockDeck::eventFilter(QObject *watched, QEvent *event)
 		captureActive();
 		saveConfig();
 	}
-	// A new child of the main window may be a dock we hold a placeholder for.
-	if (watched == main_ && event->type() == QEvent::ChildAdded && ready_ && !placeholders_.isEmpty())
-		scheduleAdopt();
+	// A new child of the main window may be a dock we hold a placeholder for,
+	// or a new dock that has to be locked too.
+	if (watched == main_ && event->type() == QEvent::ChildAdded && ready_) {
+		if (!placeholders_.isEmpty())
+			scheduleAdopt();
+		if (locked_ && !lockQueued_) {
+			lockQueued_ = true;
+			QTimer::singleShot(0, this, [this]() {
+				lockQueued_ = false;
+				updateLock();
+			});
+		}
+	}
+
+	// Locked: no resizing. The separators between docks are not widgets;
+	// QMainWindow itself handles presses (and the resize cursor on hover)
+	// on the gaps between its children, so swallow those events there.
+	if (watched == main_ && locked_) {
+		switch (event->type()) {
+		case QEvent::MouseButtonPress:
+		case QEvent::MouseButtonDblClick: {
+			const auto *me = static_cast<QMouseEvent *>(event);
+			if (!main_->childAt(me->position().toPoint()))
+				return true;
+			break;
+		}
+		case QEvent::HoverEnter:
+		case QEvent::HoverMove:
+			return true;
+		default:
+			break;
+		}
+	}
 	return QObject::eventFilter(watched, event);
 }
 
@@ -574,8 +627,14 @@ void DockDeck::scheduleRefresh()
 
 void DockDeck::refreshUi()
 {
-	if (strip_)
-		strip_->setDecks(store_.names(), store_.active);
+	if (!strip_)
+		return;
+	QSet<QString> locked;
+	for (const Deck &deck : store_.decks) {
+		if (deck.locked)
+			locked.insert(deck.name);
+	}
+	strip_->setDecks(store_.names(), locked, store_.active);
 }
 
 void DockDeck::rebuildToolsMenu()
@@ -586,7 +645,8 @@ void DockDeck::rebuildToolsMenu()
 	auto *group = new QActionGroup(toolsMenu_);
 	for (const Deck &deck : store_.decks) {
 		const QString name = deck.name;
-		QAction *a = toolsMenu_->addAction(QString(name).replace(QLatin1Char('&'), QStringLiteral("&&")));
+		const QString shown = QString(name).replace(QLatin1Char('&'), QStringLiteral("&&"));
+		QAction *a = toolsMenu_->addAction(deck.locked ? T("DockDeck.Menu.LockedDeck").arg(shown) : shown);
 		a->setCheckable(true);
 		a->setChecked(name == store_.active);
 		a->setEnabled(ready_);
@@ -601,7 +661,23 @@ void DockDeck::rebuildToolsMenu()
 	connect(add, &QAction::triggered, this, &DockDeck::newDeckFromCurrent);
 	QAction *save = toolsMenu_->addAction(T("DockDeck.Menu.SaveActive"));
 	connect(save, &QAction::triggered, this, [this]() { overwriteDeck(store_.active); });
-	save->setEnabled(ready_ && store_.find(store_.active) != nullptr);
+	const Deck *activeDeck = store_.find(store_.active);
+	save->setEnabled(ready_ && activeDeck && !activeDeck->locked);
+	toolsMenu_->addSeparator();
+
+	bool anyLocked = false, anyUnlocked = false;
+	for (const Deck &deck : store_.decks)
+		(deck.locked ? anyLocked : anyUnlocked) = true;
+	QAction *lockAll = toolsMenu_->addAction(T("DockDeck.Menu.LockAll"));
+	lockAll->setEnabled(ready_ && anyUnlocked);
+	connect(lockAll, &QAction::triggered, this, [this]() { setAllLocked(true); });
+	QAction *unlockAll = toolsMenu_->addAction(T("DockDeck.Menu.UnlockAll"));
+	unlockAll->setEnabled(ready_ && anyLocked);
+	connect(unlockAll, &QAction::triggered, this, [this]() { setAllLocked(false); });
+	if (obsDocksLocked()) {
+		QAction *note = toolsMenu_->addAction(T("DockDeck.Menu.ObsLocked"));
+		note->setEnabled(false);
+	}
 	toolsMenu_->addSeparator();
 
 	QAction *exportAll = toolsMenu_->addAction(T("DockDeck.Menu.Export"));
@@ -681,8 +757,8 @@ void DockDeck::newDeckFromCurrent()
 void DockDeck::overwriteDeck(const QString &name)
 {
 	Deck *deck = store_.find(name);
-	if (!ready_ || !deck)
-		return;
+	if (!ready_ || !deck || deck->locked)
+		return; // a locked deck is kept as is; unlock it first
 
 	// Overwriting a deck you are not looking at loses what it had, so ask.
 	if (name != store_.active &&
@@ -737,6 +813,7 @@ void DockDeck::deleteDeck(const QString &name)
 	}
 
 	obs_log(LOG_INFO, "deleted deck '%s'", name.toUtf8().constData());
+	updateLock(); // e.g. the last deck is gone
 	saveConfig();
 	scheduleRefresh();
 }
@@ -762,6 +839,86 @@ void DockDeck::setAutoSave(bool enabled)
 {
 	store_.autoSave = enabled;
 	saveConfig();
+}
+
+// ---------------------------------------------------------------------------
+// Deck locking
+//
+// A locked deck mirrors OBS's Docks > Lock Docks: every dock loses its
+// Movable/Floatable/Closable features (each dock's own features are kept in a
+// property and put back on unlock). On top of that we block resizing by
+// swallowing presses on the separators, and auto-save skips the deck. OBS's
+// own Lock Docks counts as a lock for every deck ("locked if either").
+// ---------------------------------------------------------------------------
+
+bool DockDeck::obsDocksLocked() const
+{
+	return obsLockAction_ && obsLockAction_->isChecked();
+}
+
+void DockDeck::updateLock()
+{
+	applyLock(store_.find(store_.active));
+}
+
+void DockDeck::applyLock(const Deck *deck)
+{
+	const bool deckLocked = deck && deck->locked;
+	const bool obsLocked = obsDocksLocked();
+	locked_ = deckLocked || obsLocked;
+
+	const auto docks = main_->findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
+	for (QDockWidget *dock : docks) {
+		const QVariant saved = dock->property(kSavedFeaturesProperty);
+		if (deckLocked) {
+			// Under OBS's lock the features are already off; OBS restores
+			// them itself when it unlocks, and we re-save them then.
+			if (!saved.isValid() && !obsLocked)
+				dock->setProperty(kSavedFeaturesProperty, static_cast<int>(dock->features()));
+			if (dock->features() != QDockWidget::NoDockWidgetFeatures)
+				dock->setFeatures(QDockWidget::NoDockWidgetFeatures);
+		} else if (saved.isValid()) {
+			if (!obsLocked)
+				dock->setFeatures(QDockWidget::DockWidgetFeatures(saved.toInt()));
+			dock->setProperty(kSavedFeaturesProperty, QVariant());
+		}
+	}
+	if (!locked_)
+		main_->unsetCursor(); // in case a resize cursor was left behind
+}
+
+void DockDeck::toggleLock(const QString &name)
+{
+	Deck *deck = store_.find(name);
+	if (!deck)
+		return;
+
+	// Locking the deck on screen: keep what is on screen right now first.
+	if (!deck->locked && name == store_.active && ready_ && store_.autoSave)
+		captureActive();
+	deck = store_.find(name);
+	if (!deck)
+		return;
+
+	deck->locked = !deck->locked;
+	obs_log(LOG_INFO, "%s deck '%s'", deck->locked ? "locked" : "unlocked", name.toUtf8().constData());
+	if (ready_)
+		updateLock();
+	saveConfig();
+	scheduleRefresh();
+}
+
+void DockDeck::setAllLocked(bool locked)
+{
+	if (locked && ready_ && store_.autoSave)
+		captureActive();
+	for (Deck &deck : store_.decks)
+		deck.locked = locked;
+	obs_log(LOG_INFO, "%s all decks", locked ? "locked" : "unlocked");
+	if (ready_)
+		updateLock();
+	saveConfig();
+	scheduleRefresh();
 }
 
 // ---------------------------------------------------------------------------

@@ -22,6 +22,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include <QAction>
 #include <QMenu>
+#include <QPainter>
+#include <QPainterPath>
 #include <QSignalBlocker>
 #include <QTabBar>
 #include <QToolButton>
@@ -35,6 +37,47 @@ static QString T(const char *key)
 static QString escapeMnemonic(QString text)
 {
 	return text.replace(QLatin1Char('&'), QStringLiteral("&&"));
+}
+
+// A small padlock drawn in the theme's text colour, so it fits every OBS
+// theme without shipping icon files. Unlocked = open shackle, drawn faint.
+static QIcon lockIcon(bool locked, QColor color)
+{
+	if (!locked)
+		color.setAlphaF(0.45f);
+	QIcon icon;
+	for (const int scale : {1, 2}) {
+		QPixmap pm(12 * scale, 12 * scale);
+		pm.fill(Qt::transparent);
+		QPainter p(&pm);
+		p.setRenderHint(QPainter::Antialiasing);
+		p.scale(scale, scale);
+
+		QPen pen(color, 1.4);
+		p.setPen(pen);
+		p.setBrush(Qt::NoBrush);
+		QPainterPath shackle;
+		if (locked) {
+			shackle.moveTo(3.5, 6.0);
+			shackle.lineTo(3.5, 4.0);
+			shackle.arcTo(QRectF(3.5, 1.0, 5.0, 5.0), 180.0, -180.0);
+			shackle.lineTo(8.5, 6.0);
+		} else {
+			// Shackle lifted and swung open on the right.
+			shackle.moveTo(3.5, 6.0);
+			shackle.lineTo(3.5, 3.0);
+			shackle.arcTo(QRectF(3.5, 0.5, 5.0, 5.0), 180.0, -180.0);
+			shackle.lineTo(8.5, 4.0);
+		}
+		p.drawPath(shackle);
+
+		p.setPen(Qt::NoPen);
+		p.setBrush(color);
+		p.drawRoundedRect(QRectF(2.0, 5.5, 8.0, 6.0), 1.2, 1.2);
+		p.end();
+		icon.addPixmap(pm);
+	}
+	return icon;
 }
 
 DeckStrip::DeckStrip(QWidget *parent) : QToolBar(T("DockDeck.Title"), parent)
@@ -88,8 +131,10 @@ DeckStrip::DeckStrip(QWidget *parent) : QToolBar(T("DockDeck.Title"), parent)
 	connect(addButton_, &QToolButton::clicked, this, &DeckStrip::newDeckRequested);
 }
 
-void DeckStrip::setDecks(const QStringList &names, const QString &active)
+void DeckStrip::setDecks(const QStringList &names, const QSet<QString> &locked, const QString &active)
 {
+	locked_ = locked;
+
 	// Programmatic rebuilds must never look like a user click.
 	const QSignalBlocker blocker(tabs_);
 
@@ -100,6 +145,22 @@ void DeckStrip::setDecks(const QStringList &names, const QString &active)
 		const int index = tabs_->addTab(escapeMnemonic(name));
 		tabs_->setTabData(index, name); // the real name, unescaped
 		tabs_->setTabToolTip(index, name);
+
+		// Padlock button on the tab: click toggles the deck's lock.
+		const bool isLocked = locked.contains(name);
+		auto *lock = new QToolButton(tabs_);
+		lock->setObjectName(QStringLiteral("DockDeckLockButton"));
+		lock->setAutoRaise(true);
+		lock->setFocusPolicy(Qt::NoFocus);
+		lock->setCursor(Qt::PointingHandCursor);
+		lock->setIconSize(QSize(12, 12));
+		lock->setFixedSize(16, 16);
+		lock->setStyleSheet(
+			QStringLiteral("QToolButton { border: none; padding: 0; background: transparent; }"));
+		lock->setIcon(lockIcon(isLocked, tabs_->palette().color(QPalette::WindowText)));
+		lock->setToolTip(isLocked ? T("DockDeck.Lock.Tooltip.Locked") : T("DockDeck.Lock.Tooltip.Unlocked"));
+		connect(lock, &QToolButton::clicked, this, [this, name]() { emit lockToggled(name); });
+		tabs_->setTabButton(index, QTabBar::RightSide, lock);
 	}
 
 	const qsizetype activeIndex = names.indexOf(active);
@@ -119,8 +180,12 @@ void DeckStrip::showContextMenu(const QPoint &pos)
 	QMenu menu(this);
 
 	if (!name.isEmpty()) {
-		connect(menu.addAction(T("DockDeck.Menu.Overwrite")), &QAction::triggered, this,
-			[this, name]() { emit overwriteRequested(name); });
+		const bool isLocked = locked_.contains(name);
+		connect(menu.addAction(isLocked ? T("DockDeck.Menu.Unlock") : T("DockDeck.Menu.Lock")),
+			&QAction::triggered, this, [this, name]() { emit lockToggled(name); });
+		QAction *overwrite = menu.addAction(T("DockDeck.Menu.Overwrite"));
+		overwrite->setEnabled(!isLocked); // unlock first; a lock means "keep as is"
+		connect(overwrite, &QAction::triggered, this, [this, name]() { emit overwriteRequested(name); });
 		connect(menu.addAction(T("DockDeck.Menu.Rename")), &QAction::triggered, this,
 			[this, name]() { emit renameRequested(name); });
 		connect(menu.addAction(T("DockDeck.Menu.Delete")), &QAction::triggered, this,

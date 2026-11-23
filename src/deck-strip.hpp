@@ -24,6 +24,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // top toolbar area holding a compact QTabBar and a small "+" button. The
 // strip is pure view: it only emits signals, and DockDeck decides what to do.
 
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QToolBar>
@@ -37,8 +38,9 @@ class DeckStrip : public QToolBar {
 public:
 	explicit DeckStrip(QWidget *parent);
 
-	// Rebuilds the tabs without emitting deckActivated().
-	void setDecks(const QStringList &names, const QString &active);
+	// Rebuilds the tabs without emitting deckActivated(). `locked` holds the
+	// names of locked decks (shown with a closed padlock).
+	void setDecks(const QStringList &names, const QSet<QString> &locked, const QString &active);
 
 signals:
 	void deckActivated(const QString &name);
@@ -47,6 +49,7 @@ signals:
 	void renameRequested(const QString &name);
 	void deleteRequested(const QString &name);
 	void exportRequested(const QString &name);
+	void lockToggled(const QString &name);
 	void hideRequested();
 	void deckMoved(int from, int to);
 
@@ -56,4 +59,5 @@ private:
 
 	QTabBar *tabs_ = nullptr;
 	QToolButton *addButton_ = nullptr;
+	QSet<QString> locked_;
 };

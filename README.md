@@ -13,20 +13,33 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.2.2)
+## Features (v0.3.0)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
   title.
 - **Deck tabs** directly under the menu bar: one tab per Deck, plus a small
   **+** to save the current docks as a new Deck. Drag tabs to reorder them.
-- **Right-click a Deck tab**: *Save Current Docks Into This Deck*,
+- **Right-click a Deck tab**: *Lock Deck* / *Unlock Deck*,
+  *Save Current Docks Into This Deck*,
   *Rename Deck...*, *Delete Deck...*, *Export Deck...*. Double-click a tab to
   rename it.
 - **Tools → Dock Deck**: switch Decks, *New Deck From Current Docks...*,
-  *Export Deck Collection...*, *Import Decks...*, and the settings
+  *Lock All Decks* / *Unlock All Decks*, *Export Deck Collection...*,
+  *Import Decks...*, and the settings
   *Show Deck Tabs*, *Remember Dock Changes Per Deck* and
   *Show Placeholders for Missing Docks*.
+- **Deck locking**: each tab has a small padlock; click it to lock or unlock
+  that Deck (faint open padlock = unlocked, solid closed padlock = locked).
+  While a locked Deck is shown, its docks can't be moved, resized, floated or
+  closed, and dock changes are not auto-saved into it, so it always comes back
+  exactly as you locked it. This works like OBS's own **Docks → Lock Docks**
+  (which removes the move/float/close buttons), and additionally blocks
+  dragging the splitters between docks. OBS's Lock Docks still works and counts
+  as a lock for every Deck: a Deck is locked if either is on. Locked Decks show
+  *(Locked)* in **Tools → Dock Deck**, and *Save Current Docks Into This Deck*
+  is disabled for them (unlock first). Docks can still be shown/hidden from
+  OBS's Docks menu, but on a locked Deck that isn't saved.
 - **Remember Dock Changes Per Deck** (on by default): when you move docks
   around, the active Deck keeps those changes, like pages. Turn it off if you
   only want Decks to change when you save them explicitly.
@@ -78,11 +91,13 @@ One global file (not per profile or scene collection yet):
 
 The file keeps its old name and format so earlier versions' settings load
 unchanged. Export files wrap the same entries as
-`{"format": "dock-deck-layouts", "version": 1, "layouts": [{"name", "state", "docks", "titles"}]}`,
+`{"format": "dock-deck-layouts", "version": 1, "layouts": [{"name", "state", "docks", "titles", "locked"}]}`,
 where `state` is base64 `QMainWindow::saveState()` data, `docks` maps each
 dock name to shown/hidden, and `titles` (optional, new in 0.2.2) maps each dock
-name to its title. Import also accepts a copied `layouts.json` and files from
-0.2.1 (no titles); 0.2.1 can read 0.2.2 files too.
+name to its title, and `locked` (optional, new in 0.3.0, written only when
+`true`) marks a locked Deck. Import also accepts a copied `layouts.json` and
+files from 0.2.x (no titles / no lock: imported unlocked); older versions read
+0.3.0 files too and simply ignore the lock.
 
 If the file is ever unreadable it is kept as `layouts.json.bad`, and Dock Deck
 starts fresh with a single **Main** Deck.
@@ -97,7 +112,9 @@ starts fresh with a single **Main** Deck.
 4. To move Decks to another computer, use **Tools → Dock Deck → Export Deck
    Collection...** (or right-click a tab → *Export Deck...*) there and
    **Import Decks...** here.
-5. To hide the tabs, right-click them → *Hide Deck Tabs*. Bring them back with
+5. To protect a finished Deck, click the padlock on its tab (or right-click →
+   *Lock Deck*). Click it again to make changes.
+6. To hide the tabs, right-click them → *Hide Deck Tabs*. Bring them back with
    **Tools → Dock Deck → Show Deck Tabs**.
 
 ## For developers
@@ -141,7 +158,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.2.2)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.3.0)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -158,6 +175,32 @@ Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
 
+## Manual test checklist (0.3.0)
+
+Placeholders keep their size:
+1. Make a Deck that shows a plugin's dock, quit OBS, remove that plugin, start
+   OBS: a *Missing dock* placeholder sits where the dock was.
+2. **Tools → Dock Deck → Show Placeholders for Missing Docks** off, then on:
+   the placeholder comes back at exactly the same size and place.
+3. Switch to another Deck and back (also with the setting off in between): same
+   size. Reinstall the plugin: the real dock takes the placeholder's size.
+
+Deck locking:
+1. Click the padlock on a tab: it turns solid. Docks lose their float/close
+   buttons, can't be dragged out, and the splitters between docks can't be
+   dragged.
+2. Hide a dock from OBS's Docks menu, switch to another Deck and back: the
+   locked Deck comes back unchanged.
+3. Right-click the tab: *Unlock Deck*; *Save Current Docks Into This Deck* is
+   greyed out while locked. Tools → Dock Deck shows *(Locked)* next to it.
+4. *Lock All Decks* / *Unlock All Decks* change every tab's padlock.
+5. With every Deck unlocked, turn on OBS's **Docks → Lock Docks**: docks are
+   locked (Tools → Dock Deck notes it), changes aren't auto-saved. Turn it off:
+   docks are free again. With a Deck locked, toggling OBS's lock on/off leaves
+   the Deck locked.
+6. Lock a Deck, restart OBS: still locked. Export it and import it on the other
+   computer: it arrives locked; 0.2.x files import unlocked.
+
 ## CI
 
 GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every push to `main`.
@@ -166,7 +209,8 @@ GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every pu
 
 1. ✅ Empty plugin loads in OBS (Linux + Windows).
 2. ✅ Save/load dock arrangements with `QMainWindow::saveState` / `restoreState`,
-   plus minimalist tabs under the menu bar, one tab per Deck.
+   plus minimalist tabs under the menu bar, one tab per Deck (since then:
+   export/import, placeholders for missing docks, Deck locking).
 3. Per-Deck hotkeys (Stream Deck) and obs-websocket vendor requests for remote
    switching (bots like Streamer.bot/SAMMI can expose it to chat moderators).
 4. Link Decks to scenes and scene collections for automatic switching.

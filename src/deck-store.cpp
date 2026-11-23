@@ -63,6 +63,8 @@ static QJsonObject deckToJson(const Deck &deck)
 			titles.insert(it.key(), it.value());
 		o.insert(QStringLiteral("titles"), titles);
 	}
+	if (deck.locked)
+		o.insert(QStringLiteral("locked"), true);
 	return o;
 }
 
@@ -110,6 +112,7 @@ static bool deckFromJson(const QJsonValue &value, Deck *out)
 		deck.docks.insert(it.key(), it.value().toBool());
 	}
 	deck.titles = titlesFromJson(o.value(QStringLiteral("titles")));
+	deck.locked = o.value(QStringLiteral("locked")).toBool(false); // non-bool: unlocked
 
 	*out = deck;
 	return true;
@@ -219,6 +222,7 @@ DeckStore::LoadResult DeckStore::load(const QString &path)
 		for (auto it = docks.begin(); it != docks.end(); ++it)
 			deck.docks.insert(it.key(), it.value().toBool());
 		deck.titles = titlesFromJson(o.value(QStringLiteral("titles")));
+		deck.locked = o.value(QStringLiteral("locked")).toBool(false);
 
 		decks.append(deck);
 	}
