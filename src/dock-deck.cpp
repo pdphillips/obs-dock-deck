@@ -203,7 +203,24 @@ Deck DockDeck::capture(const QString &name, const Deck *previous) const
 {
 	Deck deck;
 	deck.name = name;
+
+	// Qt forgets the size of hidden docks in saveState(). Placeholders that
+	// are hidden only because the setting is off are shown for the snapshot
+	// and hidden again right away (same call, nothing is painted), so their
+	// size survives switching decks while the setting is off.
+	QVector<QDockWidget *> reshow;
+	if (!store_.showPlaceholders) {
+		for (auto it = placeholders_.constBegin(); it != placeholders_.constEnd(); ++it) {
+			const bool deckShows = previous ? previous->docks.value(it.key(), true) : true;
+			if (it.value() && deckShows && it.value()->isHidden()) {
+				it.value()->show();
+				reshow.append(it.value());
+			}
+		}
+	}
 	deck.state = main_->saveState();
+	for (QDockWidget *dock : reshow)
+		dock->hide();
 
 	// Only docks that belong to the main window itself; floating docks keep
 	// the main window as parent, so they are included too. A dock's "shown"
@@ -215,7 +232,12 @@ Deck DockDeck::capture(const QString &name, const Deck *previous) const
 		const QString id = dock->objectName();
 		if (id.isEmpty())
 			continue;
-		deck.docks.insert(id, dock->toggleViewAction()->isChecked());
+		bool shown = dock->toggleViewAction()->isChecked();
+		// With the setting off, placeholders are hidden by us, not by the
+		// user: keep the deck's own shown/hidden value for that dock.
+		if (isPlaceholder(dock) && !store_.showPlaceholders)
+			shown = previous ? previous->docks.value(id, true) : true;
+		deck.docks.insert(id, shown);
 		const QString title = dock->windowTitle().simplified();
 		if (!title.isEmpty())
 			deck.titles.insert(id, title);
@@ -258,8 +280,9 @@ void DockDeck::apply(const Deck &deck)
 		const auto it = deck.docks.constFind(dock->objectName());
 		if (it == deck.docks.constEnd())
 			continue; // dock is newer than the deck: leave it alone
-		if (dock->toggleViewAction()->isChecked() != it.value())
-			dock->setVisible(it.value());
+		const bool want = it.value() && (store_.showPlaceholders || !isPlaceholder(dock));
+		if (dock->toggleViewAction()->isChecked() != want)
+			dock->setVisible(want);
 	}
 
 	// The strip is part of saveState(), so put it back the way the user wants.
@@ -282,6 +305,11 @@ void DockDeck::apply(const Deck &deck)
 //
 // When the real dock shows up later (we watch the main window for new child
 // widgets), adoptRealDocks() swaps it into the placeholder's spot.
+//
+// The "Show Placeholders for Missing Docks" setting only hides them. A
+// hidden dock keeps its slot and size in Qt's layout (and in saveState()),
+// so turning the setting back on, switching decks, or the real dock
+// arriving later all bring it back at exactly the same size and place.
 // ---------------------------------------------------------------------------
 
 QHash<QString, QDockWidget *> DockDeck::realDocks() const
@@ -301,7 +329,7 @@ void DockDeck::syncPlaceholders(const Deck *deck)
 
 	// Which docks need a stand-in: shown in this deck and missing here.
 	QHash<QString, QString> needed; // objectName -> title
-	if (deck && store_.showPlaceholders) {
+	if (deck) {
 		for (auto it = deck->docks.constBegin(); it != deck->docks.constEnd(); ++it) {
 			if (it.value() && !real.contains(it.key()))
 				needed.insert(it.key(), deck->titles.value(it.key()));
@@ -353,6 +381,8 @@ QDockWidget *DockDeck::createPlaceholder(const QString &name, const QString &tit
 	dock->setWidget(body);
 
 	main_->addDockWidget(Qt::RightDockWidgetArea, dock);
+	if (!store_.showPlaceholders)
+		dock->hide();
 	obs_log(LOG_INFO, "placeholder for missing dock '%s'", name.toUtf8().constData());
 	return dock;
 }
@@ -393,8 +423,15 @@ void DockDeck::adoptRealDocks()
 	QVector<Swap> swaps;
 	const QHash<QString, QDockWidget *> real = realDocks();
 	for (auto it = placeholders_.constBegin(); it != placeholders_.constEnd(); ++it) {
-		if (it.value() && real.contains(it.key()))
-			swaps.append({it.key(), real.value(it.key()), it.value()->toggleViewAction()->isChecked()});
+		if (it.value() && real.contains(it.key())) {
+			// With the setting off the placeholder is hidden by us; use the
+			// deck's value for the real dock instead.
+			const Deck *active = store_.find(store_.active);
+			const bool shown = store_.showPlaceholders
+						   ? it.value()->toggleViewAction()->isChecked()
+						   : (active ? active->docks.value(it.key(), true) : true);
+			swaps.append({it.key(), real.value(it.key()), shown});
+		}
 	}
 	if (swaps.isEmpty())
 		return;
@@ -406,6 +443,13 @@ void DockDeck::adoptRealDocks()
 	// runs in between, so OBS never sees the temporary names.
 	for (const Swap &s : swaps)
 		s.real->setObjectName(s.name + QStringLiteral("#dockdeck-adopting"));
+	// Same as capture(): a placeholder hidden only by the setting is shown
+	// for the snapshot so its size is recorded (it is removed right after).
+	for (const Swap &s : swaps) {
+		QDockWidget *ph = placeholders_.value(s.name);
+		if (ph && s.shown && ph->isHidden())
+			ph->show();
+	}
 	const QByteArray state = main_->saveState();
 	for (const Swap &s : swaps)
 		s.real->setObjectName(s.name);
@@ -430,15 +474,21 @@ void DockDeck::adoptRealDocks()
 
 void DockDeck::setShowPlaceholders(bool enabled)
 {
+	// Record what is on screen first (with the old setting), so the deck keeps
+	// any change the user made to a placeholder.
+	if (ready_ && store_.autoSave)
+		captureActive();
 	store_.showPlaceholders = enabled;
-	if (ready_) {
-		// Keep current positions (placeholders included) before changing.
-		if (store_.autoSave)
-			captureActive();
-		if (const Deck *active = store_.find(store_.active); active && enabled)
-			apply(*active); // creates placeholders and puts them in place
-		else
-			syncPlaceholders(nullptr); // removes them all
+
+	// Only show/hide: the placeholders stay in the layout, so Qt keeps their
+	// exact slot and size while hidden.
+	const Deck *active = store_.find(store_.active);
+	for (auto it = placeholders_.constBegin(); it != placeholders_.constEnd(); ++it) {
+		if (!it.value())
+			continue;
+		const bool want = enabled && (active ? active->docks.value(it.key(), true) : true);
+		if (it.value()->toggleViewAction()->isChecked() != want)
+			it.value()->setVisible(want);
 	}
 	saveConfig();
 }
