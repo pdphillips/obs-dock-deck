@@ -35,7 +35,7 @@ class TabStrip;
 // Where a switch request came from. Only tabs/menu/startup exist today; the
 // rest are reserved so future triggers (and the optional fade) plug into
 // switchToLayout() without changing its signature.
-enum class SwitchSource { Tab, Menu, Startup, Hotkey, Websocket, SceneLink, Api };
+enum class SwitchSource { Tab, Menu, Startup, Import, Hotkey, Websocket, SceneLink, Api };
 
 class DockDeck : public QObject {
 	Q_OBJECT
@@ -72,10 +72,13 @@ private:
 	void renameLayout(const QString &name);
 	void deleteLayout(const QString &name);
 	void moveLayout(int from, int to);
+	void exportLayouts(const QString &onlyName = QString());
+	void importLayouts();
 	void setTabStripVisible(bool visible);
 	void setAutoSave(bool enabled);
 
 	QString askForName(const QString &title, const QString &initial, const QString &ignore);
+	QString uniqueName(const QString &base) const;
 
 	QMainWindow *main_;
 	QPointer<TabStrip> strip_;

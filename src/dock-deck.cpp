@@ -27,13 +27,19 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QActionGroup>
 #include <QDir>
 #include <QDockWidget>
+#include <QCheckBox>
 #include <QEvent>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QInputDialog>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMessageBox>
+#include <QPushButton>
+#include <QRegularExpression>
 #include <QScopedValueRollback>
+#include <QSet>
+#include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
 
@@ -51,6 +57,8 @@ static const char *sourceName(SwitchSource source)
 		return "menu";
 	case SwitchSource::Startup:
 		return "startup";
+	case SwitchSource::Import:
+		return "import";
 	case SwitchSource::Hotkey:
 		return "hotkey";
 	case SwitchSource::Websocket:
@@ -101,6 +109,7 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 	connect(strip_, &TabStrip::overwriteRequested, this, &DockDeck::overwriteLayout);
 	connect(strip_, &TabStrip::renameRequested, this, &DockDeck::renameLayout);
 	connect(strip_, &TabStrip::deleteRequested, this, &DockDeck::deleteLayout);
+	connect(strip_, &TabStrip::exportRequested, this, [this](const QString &name) { exportLayouts(name); });
 	connect(strip_, &TabStrip::hideRequested, this, [this]() { setTabStripVisible(false); });
 	connect(strip_, &TabStrip::layoutMoved, this, &DockDeck::moveLayout);
 
@@ -332,6 +341,14 @@ void DockDeck::rebuildToolsMenu()
 	save->setEnabled(ready_ && store_.find(store_.active) != nullptr);
 	toolsMenu_->addSeparator();
 
+	QAction *exportAll = toolsMenu_->addAction(T("DockDeck.Menu.Export"));
+	exportAll->setEnabled(ready_ && !store_.layouts.isEmpty());
+	connect(exportAll, &QAction::triggered, this, [this]() { exportLayouts(); });
+	QAction *import = toolsMenu_->addAction(T("DockDeck.Menu.Import"));
+	import->setEnabled(ready_);
+	connect(import, &QAction::triggered, this, &DockDeck::importLayouts);
+	toolsMenu_->addSeparator();
+
 	QAction *show = toolsMenu_->addAction(T("DockDeck.Menu.ShowStrip"));
 	show->setCheckable(true);
 	show->setChecked(store_.showTabStrip);
@@ -476,4 +493,193 @@ void DockDeck::setAutoSave(bool enabled)
 {
 	store_.autoSave = enabled;
 	saveConfig();
+}
+
+// ---------------------------------------------------------------------------
+// Import / export
+// ---------------------------------------------------------------------------
+
+// "Name (2)", "Name (3)", ... first one that is free.
+QString DockDeck::uniqueName(const QString &base) const
+{
+	for (int n = 2;; ++n) {
+		const QString candidate = QStringLiteral("%1 (%2)").arg(base).arg(n);
+		if (!store_.nameTaken(candidate))
+			return candidate;
+	}
+}
+
+void DockDeck::exportLayouts(const QString &onlyName)
+{
+	if (!ready_)
+		return;
+
+	// Make sure the active layout reflects what is on screen right now.
+	if (store_.autoSave)
+		captureActive();
+
+	QVector<DockLayout> layouts;
+	if (onlyName.isEmpty()) {
+		layouts = store_.layouts;
+	} else if (const DockLayout *layout = store_.find(onlyName)) {
+		layouts.append(*layout);
+	}
+	if (layouts.isEmpty())
+		return;
+
+	// Suggest a file name: the layout's name (minus characters that are not
+	// allowed in file names), or a generic one for "export all".
+	QString fileName = QStringLiteral("dock-deck-layouts.json");
+	if (!onlyName.isEmpty()) {
+		QString safe = onlyName;
+		safe.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
+		fileName = QStringLiteral("dock-deck-%1.json").arg(safe.trimmed());
+	}
+	const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+
+	const QString path = QFileDialog::getSaveFileName(
+		main_, T("DockDeck.Dialog.ExportTitle"), QDir(dir).filePath(fileName), T("DockDeck.Dialog.FileFilter"));
+	if (path.isEmpty())
+		return;
+
+	QString error;
+	if (!LayoutFile::write(path, layouts, &error)) {
+		QMessageBox::warning(main_, T("DockDeck.Dialog.ExportTitle"),
+				     T("DockDeck.Dialog.ExportFailed").arg(path, error));
+		return;
+	}
+	obs_log(LOG_INFO, "exported %d layout(s) to %s", static_cast<int>(layouts.size()), path.toUtf8().constData());
+}
+
+void DockDeck::importLayouts()
+{
+	if (!ready_)
+		return;
+
+	const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+	const QString path = QFileDialog::getOpenFileName(main_, T("DockDeck.Dialog.ImportTitle"), dir,
+							  T("DockDeck.Dialog.FileFilter"));
+	if (path.isEmpty())
+		return;
+
+	LayoutFile::ReadResult file;
+	const LayoutFile::ReadError err = LayoutFile::read(path, &file);
+	if (err != LayoutFile::ReadError::None) {
+		const char *key = "DockDeck.Import.Error.Invalid";
+		switch (err) {
+		case LayoutFile::ReadError::CannotOpen:
+			key = "DockDeck.Import.Error.CannotOpen";
+			break;
+		case LayoutFile::ReadError::TooNew:
+			key = "DockDeck.Import.Error.TooNew";
+			break;
+		case LayoutFile::ReadError::NoLayouts:
+			key = "DockDeck.Import.Error.NoLayouts";
+			break;
+		default:
+			break;
+		}
+		QMessageBox::warning(main_, T("DockDeck.Dialog.ImportTitle"), T(key));
+		return;
+	}
+
+	// Keep the active tab's current docks before anything changes.
+	if (store_.autoSave)
+		captureActive();
+
+	// Docks that exist here, to report what the imported layouts can't place.
+	QSet<QString> localDocks;
+	for (QDockWidget *dock : main_->findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly))
+		localDocks.insert(dock->objectName());
+	QSet<QString> missingDocks;
+
+	int added = 0, replaced = 0, skipped = 0;
+	bool reapplyActive = false;
+
+	// "Do the same for the rest" remembers the answer for later clashes.
+	enum class Choice { Ask, Replace, KeepBoth, Skip };
+	Choice remembered = Choice::Ask;
+
+	for (DockLayout layout : file.layouts) {
+		// Case-insensitive clash, matching how names are validated.
+		DockLayout *existing = nullptr;
+		for (DockLayout &l : store_.layouts) {
+			if (l.name.compare(layout.name, Qt::CaseInsensitive) == 0) {
+				existing = &l;
+				break;
+			}
+		}
+
+		Choice choice = existing ? remembered : Choice::KeepBoth;
+		if (existing && choice == Choice::Ask) {
+			QMessageBox box(QMessageBox::Question, T("DockDeck.Dialog.ImportTitle"),
+					T("DockDeck.Import.Clash").arg(layout.name), QMessageBox::NoButton, main_);
+			QPushButton *replaceBtn = box.addButton(T("DockDeck.Import.Replace"), QMessageBox::AcceptRole);
+			QPushButton *keepBtn = box.addButton(T("DockDeck.Import.KeepBoth"), QMessageBox::AcceptRole);
+			QPushButton *skipBtn = box.addButton(T("DockDeck.Import.Skip"), QMessageBox::RejectRole);
+			box.setDefaultButton(keepBtn);
+			box.setEscapeButton(skipBtn);
+			auto *applyToAll = new QCheckBox(T("DockDeck.Import.ApplyToAll"), &box);
+			box.setCheckBox(applyToAll);
+			box.exec();
+
+			if (box.clickedButton() == replaceBtn)
+				choice = Choice::Replace;
+			else if (box.clickedButton() == keepBtn)
+				choice = Choice::KeepBoth;
+			else
+				choice = Choice::Skip;
+			if (applyToAll->isChecked())
+				remembered = choice;
+		}
+
+		if (choice == Choice::Skip) {
+			++skipped;
+			continue;
+		}
+
+		for (auto it = layout.docks.constBegin(); it != layout.docks.constEnd(); ++it) {
+			if (!localDocks.contains(it.key()))
+				missingDocks.insert(it.key());
+		}
+
+		if (existing && choice == Choice::Replace) {
+			// Keep the existing tab's name and position; take the docks.
+			const QString keepName = existing->name;
+			*existing = layout;
+			existing->name = keepName;
+			if (keepName == store_.active)
+				reapplyActive = true;
+			++replaced;
+		} else {
+			if (existing)
+				layout.name = uniqueName(layout.name);
+			store_.layouts.append(layout);
+			++added;
+		}
+	}
+
+	// The tab you are on was replaced: show its new docks right away. Clearing
+	// active first makes switchToLayout() apply it without auto-saving over it.
+	if (reapplyActive) {
+		const QString name = store_.active;
+		store_.active.clear();
+		switchToLayout(name, SwitchSource::Import);
+	}
+
+	obs_log(LOG_INFO, "imported from %s: %d added, %d replaced, %d skipped, %d invalid", path.toUtf8().constData(),
+		added, replaced, skipped, file.invalidEntries);
+	saveConfig();
+	scheduleRefresh();
+
+	QString summary = T("DockDeck.Import.Summary").arg(added).arg(replaced).arg(skipped);
+	if (file.invalidEntries > 0)
+		summary += QStringLiteral("\n") + T("DockDeck.Import.InvalidEntries").arg(file.invalidEntries);
+	if (!missingDocks.isEmpty()) {
+		QStringList names = missingDocks.values();
+		names.sort(Qt::CaseInsensitive);
+		summary += QStringLiteral("\n\n") +
+			   T("DockDeck.Import.MissingDocks").arg(names.join(QStringLiteral(", ")));
+	}
+	QMessageBox::information(main_, T("DockDeck.Dialog.ImportTitle"), summary);
 }

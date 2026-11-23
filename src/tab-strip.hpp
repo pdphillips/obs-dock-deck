@@ -46,6 +46,7 @@ signals:
 	void overwriteRequested(const QString &name);
 	void renameRequested(const QString &name);
 	void deleteRequested(const QString &name);
+	void exportRequested(const QString &name);
 	void hideRequested();
 	void layoutMoved(int from, int to);
 

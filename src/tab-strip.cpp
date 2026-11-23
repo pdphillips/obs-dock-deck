@@ -125,6 +125,8 @@ void TabStrip::showContextMenu(const QPoint &pos)
 			[this, name]() { emit renameRequested(name); });
 		connect(menu.addAction(T("DockDeck.Menu.Delete")), &QAction::triggered, this,
 			[this, name]() { emit deleteRequested(name); });
+		connect(menu.addAction(T("DockDeck.Menu.ExportOne")), &QAction::triggered, this,
+			[this, name]() { emit exportRequested(name); });
 		menu.addSeparator();
 	}
 	connect(menu.addAction(T("DockDeck.Menu.New")), &QAction::triggered, this, &TabStrip::newLayoutRequested);
