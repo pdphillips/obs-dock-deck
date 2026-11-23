@@ -33,6 +33,7 @@ static constexpr const char *kExportFormat = "dock-deck-layouts";
 // Hard limits that keep a hostile or broken file from doing anything silly.
 static constexpr qint64 kMaxFileBytes = 16 * 1024 * 1024;
 static constexpr int kMaxNameLength = 100;
+static constexpr int kMaxTitleLength = 200;
 static constexpr int kMaxDecks = 500;
 
 // QMainWindow::saveState() data starts with a 32-bit 0xff marker.
@@ -53,7 +54,29 @@ static QJsonObject deckToJson(const Deck &deck)
 	o.insert(QStringLiteral("name"), deck.name);
 	o.insert(QStringLiteral("state"), QString::fromLatin1(deck.state.toBase64()));
 	o.insert(QStringLiteral("docks"), docks);
+
+	// Titles are an optional extra key, so older Dock Deck versions (which
+	// ignore unknown keys) can still read files written by this one.
+	if (!deck.titles.isEmpty()) {
+		QJsonObject titles;
+		for (auto it = deck.titles.constBegin(); it != deck.titles.constEnd(); ++it)
+			titles.insert(it.key(), it.value());
+		o.insert(QStringLiteral("titles"), titles);
+	}
 	return o;
+}
+
+// Titles are cosmetic: bad entries are dropped instead of rejecting the deck.
+static QHash<QString, QString> titlesFromJson(const QJsonValue &value)
+{
+	QHash<QString, QString> titles;
+	const QJsonObject o = value.toObject();
+	for (auto it = o.begin(); it != o.end(); ++it) {
+		const QString title = it.value().toString().simplified();
+		if (!it.key().isEmpty() && !title.isEmpty() && title.size() <= kMaxTitleLength)
+			titles.insert(it.key(), title);
+	}
+	return titles;
 }
 
 // Strict parse of one deck entry; returns false if anything is off.
@@ -86,6 +109,7 @@ static bool deckFromJson(const QJsonValue &value, Deck *out)
 			return false;
 		deck.docks.insert(it.key(), it.value().toBool());
 	}
+	deck.titles = titlesFromJson(o.value(QStringLiteral("titles")));
 
 	*out = deck;
 	return true;
@@ -180,6 +204,7 @@ DeckStore::LoadResult DeckStore::load(const QString &path)
 	active = root.value(QStringLiteral("active")).toString();
 	showTabStrip = root.value(QStringLiteral("showTabStrip")).toBool(true);
 	autoSave = root.value(QStringLiteral("autoSave")).toBool(true);
+	showPlaceholders = root.value(QStringLiteral("showPlaceholders")).toBool(true);
 
 	const QJsonArray arr = root.value(QStringLiteral("layouts")).toArray();
 	for (const QJsonValue &v : arr) {
@@ -193,6 +218,7 @@ DeckStore::LoadResult DeckStore::load(const QString &path)
 		const QJsonObject docks = o.value(QStringLiteral("docks")).toObject();
 		for (auto it = docks.begin(); it != docks.end(); ++it)
 			deck.docks.insert(it.key(), it.value().toBool());
+		deck.titles = titlesFromJson(o.value(QStringLiteral("titles")));
 
 		decks.append(deck);
 	}
@@ -210,6 +236,7 @@ bool DeckStore::save(const QString &path) const
 	root.insert(QStringLiteral("active"), active);
 	root.insert(QStringLiteral("showTabStrip"), showTabStrip);
 	root.insert(QStringLiteral("autoSave"), autoSave);
+	root.insert(QStringLiteral("showPlaceholders"), showPlaceholders);
 	root.insert(QStringLiteral("layouts"), arr);
 
 	QSaveFile file(path);

@@ -40,6 +40,11 @@ struct Deck {
 	// saved. Docks that are not listed here (for example a plugin installed
 	// later) are left alone when the deck is applied.
 	QHash<QString, bool> docks;
+
+	// objectName -> human-readable dock title (as shown in OBS's Docks menu),
+	// so placeholders for missing docks can show a friendly name. Optional:
+	// decks saved before 0.2.2 have no titles.
+	QHash<QString, QString> titles;
 };
 
 // Export/import of decks to a standalone JSON file, so they can be shared
@@ -83,7 +88,8 @@ public:
 	QStringList names() const;
 
 	QVector<Deck> decks;
-	QString active;           // name of the active deck ("" if none)
-	bool showTabStrip = true; // tab strip under the menu bar
-	bool autoSave = true;     // keep dock changes in the active deck
+	QString active;               // name of the active deck ("" if none)
+	bool showTabStrip = true;     // tab strip under the menu bar
+	bool autoSave = true;         // keep dock changes in the active deck
+	bool showPlaceholders = true; // stand-in panels for docks missing here
 };
