@@ -41,8 +41,17 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
   # Retry until the PPA's build is the install candidate, or fail clearly.
   local obs_candidate=''
   local -i attempt
+  local ppa_source
   for attempt ({1..6}) {
     sudo add-apt-repository --yes --no-update ppa:obsproject/obs-studio || true
+    # Ubuntu 26.04 cloud images (GitHub's runners included) prefer amd64v3
+    # packages, and the OBS PPA's amd64v3 index is empty, so apt never sees
+    # its obs-studio. Pin the PPA source to the baseline architecture.
+    for ppa_source (/etc/apt/sources.list.d/obsproject-ubuntu-obs-studio-*.sources(N)) {
+      if ! grep -q '^Architectures:' ${ppa_source}; then
+        sudo sed -i "/^Types:/a Architectures: $(dpkg --print-architecture)" ${ppa_source}
+      fi
+    }
     sudo apt-get -o Acquire::Retries=3 update || true
     obs_candidate="$(apt-cache policy obs-studio | awk '/Candidate:/ { print $2 }')"
     if [[ ${obs_candidate} == *obsproject* ]] break
