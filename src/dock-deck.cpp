@@ -17,7 +17,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
 #include "dock-deck.hpp"
-#include "tab-strip.hpp"
+#include "deck-strip.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -52,7 +52,7 @@ static const char *sourceName(SwitchSource source)
 {
 	switch (source) {
 	case SwitchSource::Tab:
-		return "tab";
+		return "deck-tab";
 	case SwitchSource::Menu:
 		return "menu";
 	case SwitchSource::Startup:
@@ -82,15 +82,15 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 	if (!configPath_.isEmpty()) {
 		QDir().mkpath(QFileInfo(configPath_).absolutePath());
 		switch (store_.load(configPath_)) {
-		case LayoutStore::LoadResult::Ok:
-			obs_log(LOG_INFO, "loaded %d layout(s) from %s", static_cast<int>(store_.layouts.size()),
+		case DeckStore::LoadResult::Ok:
+			obs_log(LOG_INFO, "loaded %d deck(s) from %s", static_cast<int>(store_.decks.size()),
 				configPath_.toUtf8().constData());
 			break;
-		case LayoutStore::LoadResult::Missing:
-			obs_log(LOG_INFO, "no layouts yet; a default one is created when OBS finishes loading");
+		case DeckStore::LoadResult::Missing:
+			obs_log(LOG_INFO, "no decks yet; a default one is created when OBS finishes loading");
 			break;
-		case LayoutStore::LoadResult::Corrupt:
-			obs_log(LOG_WARNING, "layouts file was unreadable; kept it as %s.bad and started fresh",
+		case DeckStore::LoadResult::Corrupt:
+			obs_log(LOG_WARNING, "deck collection file was unreadable; kept it as %s.bad and started fresh",
 				configPath_.toUtf8().constData());
 			break;
 		}
@@ -98,23 +98,23 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 
 	// Tab strip: a fixed toolbar in the top toolbar area, which Qt places
 	// directly under the menu bar and above every dock and the preview. It
-	// stays hidden until OBS has finished loading and a layout is applied.
-	strip_ = new TabStrip(main_);
+	// stays hidden until OBS has finished loading and a deck is applied.
+	strip_ = new DeckStrip(main_);
 	main_->addToolBar(Qt::TopToolBarArea, strip_);
 	strip_->setVisible(false);
 
-	connect(strip_, &TabStrip::layoutActivated, this,
-		[this](const QString &name) { switchToLayout(name, SwitchSource::Tab); });
-	connect(strip_, &TabStrip::newLayoutRequested, this, &DockDeck::newLayoutFromCurrent);
-	connect(strip_, &TabStrip::overwriteRequested, this, &DockDeck::overwriteLayout);
-	connect(strip_, &TabStrip::renameRequested, this, &DockDeck::renameLayout);
-	connect(strip_, &TabStrip::deleteRequested, this, &DockDeck::deleteLayout);
-	connect(strip_, &TabStrip::exportRequested, this, [this](const QString &name) { exportLayouts(name); });
-	connect(strip_, &TabStrip::hideRequested, this, [this]() { setTabStripVisible(false); });
-	connect(strip_, &TabStrip::layoutMoved, this, &DockDeck::moveLayout);
+	connect(strip_, &DeckStrip::deckActivated, this,
+		[this](const QString &name) { switchToDeck(name, SwitchSource::Tab); });
+	connect(strip_, &DeckStrip::newDeckRequested, this, &DockDeck::newDeckFromCurrent);
+	connect(strip_, &DeckStrip::overwriteRequested, this, &DockDeck::overwriteDeck);
+	connect(strip_, &DeckStrip::renameRequested, this, &DockDeck::renameDeck);
+	connect(strip_, &DeckStrip::deleteRequested, this, &DockDeck::deleteDeck);
+	connect(strip_, &DeckStrip::exportRequested, this, [this](const QString &name) { exportDecks(name); });
+	connect(strip_, &DeckStrip::hideRequested, this, [this]() { setTabStripVisible(false); });
+	connect(strip_, &DeckStrip::deckMoved, this, &DockDeck::moveDeck);
 
-	// Tools > Dock Deck submenu (switch layouts, toggle the strip, options).
-	// It is rebuilt each time it opens so it always matches the layout list.
+	// Tools > Dock Deck submenu (switch decks, toggle the strip, options).
+	// It is rebuilt each time it opens so it always matches the deck list.
 	toolsAction_ = static_cast<QAction *>(obs_frontend_add_tools_menu_qaction(obs_module_text("DockDeck.Title")));
 	if (toolsAction_) {
 		toolsMenu_ = new QMenu(main_);
@@ -138,22 +138,22 @@ DockDeck::~DockDeck()
 // The central switch
 // ---------------------------------------------------------------------------
 
-bool DockDeck::switchToLayout(const QString &name, SwitchSource source)
+bool DockDeck::switchToDeck(const QString &name, SwitchSource source)
 {
 	// Hotkeys and websocket requests arrive on OBS worker threads; widgets may
 	// only be touched on the UI thread.
 	if (QThread::currentThread() != thread()) {
 		QMetaObject::invokeMethod(
-			this, [this, name, source]() { switchToLayout(name, source); }, Qt::QueuedConnection);
+			this, [this, name, source]() { switchToDeck(name, source); }, Qt::QueuedConnection);
 		return true;
 	}
 
 	if (applying_)
 		return false;
 
-	DockLayout *target = store_.find(name);
+	Deck *target = store_.find(name);
 	if (!target) {
-		obs_log(LOG_WARNING, "switch to unknown layout '%s' (%s) ignored", name.toUtf8().constData(),
+		obs_log(LOG_WARNING, "switch to unknown deck '%s' (%s) ignored", name.toUtf8().constData(),
 			sourceName(source));
 		scheduleRefresh(); // e.g. resync the strip if it showed something stale
 		return false;
@@ -182,18 +182,18 @@ bool DockDeck::switchToLayout(const QString &name, SwitchSource source)
 	apply(*target);
 	store_.active = name;
 
-	obs_log(LOG_INFO, "switched to layout '%s' (%s)", name.toUtf8().constData(), sourceName(source));
+	obs_log(LOG_INFO, "switched to deck '%s' (%s)", name.toUtf8().constData(), sourceName(source));
 	saveConfig();
 	scheduleRefresh();
 	return true;
 }
 
 // Snapshot the main window's current dock arrangement.
-DockLayout DockDeck::capture(const QString &name) const
+Deck DockDeck::capture(const QString &name) const
 {
-	DockLayout layout;
-	layout.name = name;
-	layout.state = main_->saveState();
+	Deck deck;
+	deck.name = name;
+	deck.state = main_->saveState();
 
 	// Only docks that belong to the main window itself; floating docks keep
 	// the main window as parent, so they are included too. A dock's "shown"
@@ -202,28 +202,28 @@ DockLayout DockDeck::capture(const QString &name) const
 	const auto docks = main_->findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
 	for (QDockWidget *dock : docks) {
 		if (!dock->objectName().isEmpty())
-			layout.docks.insert(dock->objectName(), dock->toggleViewAction()->isChecked());
+			deck.docks.insert(dock->objectName(), dock->toggleViewAction()->isChecked());
 	}
-	return layout;
+	return deck;
 }
 
 // Apply a saved arrangement. Missing docks are skipped, never fatal.
-void DockDeck::apply(const DockLayout &layout)
+void DockDeck::apply(const Deck &deck)
 {
 	const QScopedValueRollback<bool> guard(applying_, true);
 
 	// restoreState() ignores docks it doesn't know and keeps placeholders for
 	// saved docks that don't exist right now, so a missing plugin is harmless.
-	if (!layout.state.isEmpty() && !main_->restoreState(layout.state))
-		obs_log(LOG_WARNING, "layout '%s': Qt could not restore the saved dock state",
-			layout.name.toUtf8().constData());
+	if (!deck.state.isEmpty() && !main_->restoreState(deck.state))
+		obs_log(LOG_WARNING, "deck '%s': Qt could not restore the saved dock state",
+			deck.name.toUtf8().constData());
 
-	// Then enforce shown/hidden for every dock the layout knows about.
+	// Then enforce shown/hidden for every dock the deck knows about.
 	const auto docks = main_->findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
 	for (QDockWidget *dock : docks) {
-		const auto it = layout.docks.constFind(dock->objectName());
-		if (it == layout.docks.constEnd())
-			continue; // dock is newer than the layout: leave it alone
+		const auto it = deck.docks.constFind(dock->objectName());
+		if (it == deck.docks.constEnd())
+			continue; // dock is newer than the deck: leave it alone
 		if (dock->toggleViewAction()->isChecked() != it.value())
 			dock->setVisible(it.value());
 	}
@@ -235,7 +235,7 @@ void DockDeck::apply(const DockLayout &layout)
 
 void DockDeck::captureActive()
 {
-	DockLayout *active = store_.find(store_.active);
+	Deck *active = store_.find(store_.active);
 	if (active)
 		*active = capture(active->name);
 }
@@ -249,15 +249,15 @@ void DockDeck::onFinishedLoading()
 	// Defer one event-loop turn so plugins that add docks in their own
 	// FINISHED_LOADING handler have done so before we restore.
 	QTimer::singleShot(0, this, [this]() {
-		if (store_.layouts.isEmpty()) {
+		if (store_.decks.isEmpty()) {
 			// First run: the current arrangement becomes the first tab.
-			store_.layouts.append(capture(T("DockDeck.DefaultLayoutName")));
-			store_.active = store_.layouts.front().name;
+			store_.decks.append(capture(T("DockDeck.DefaultDeckName")));
+			store_.active = store_.decks.front().name;
 		} else {
 			if (!store_.find(store_.active))
-				store_.active = store_.layouts.front().name;
+				store_.active = store_.decks.front().name;
 			apply(*store_.find(store_.active));
-			obs_log(LOG_INFO, "restored layout '%s' (startup)", store_.active.toUtf8().constData());
+			obs_log(LOG_INFO, "restored deck '%s' (startup)", store_.active.toUtf8().constData());
 		}
 
 		ready_ = true;
@@ -312,41 +312,41 @@ void DockDeck::scheduleRefresh()
 void DockDeck::refreshUi()
 {
 	if (strip_)
-		strip_->setLayouts(store_.names(), store_.active);
+		strip_->setDecks(store_.names(), store_.active);
 }
 
 void DockDeck::rebuildToolsMenu()
 {
 	toolsMenu_->clear();
 
-	// One checkable entry per layout; picking one switches to it.
+	// One checkable entry per deck; picking one switches to it.
 	auto *group = new QActionGroup(toolsMenu_);
-	for (const DockLayout &layout : store_.layouts) {
-		const QString name = layout.name;
+	for (const Deck &deck : store_.decks) {
+		const QString name = deck.name;
 		QAction *a = toolsMenu_->addAction(QString(name).replace(QLatin1Char('&'), QStringLiteral("&&")));
 		a->setCheckable(true);
 		a->setChecked(name == store_.active);
 		a->setEnabled(ready_);
 		group->addAction(a);
-		connect(a, &QAction::triggered, this, [this, name]() { switchToLayout(name, SwitchSource::Menu); });
+		connect(a, &QAction::triggered, this, [this, name]() { switchToDeck(name, SwitchSource::Menu); });
 	}
-	if (!store_.layouts.isEmpty())
+	if (!store_.decks.isEmpty())
 		toolsMenu_->addSeparator();
 
 	QAction *add = toolsMenu_->addAction(T("DockDeck.Menu.New"));
 	add->setEnabled(ready_);
-	connect(add, &QAction::triggered, this, &DockDeck::newLayoutFromCurrent);
+	connect(add, &QAction::triggered, this, &DockDeck::newDeckFromCurrent);
 	QAction *save = toolsMenu_->addAction(T("DockDeck.Menu.SaveActive"));
-	connect(save, &QAction::triggered, this, [this]() { overwriteLayout(store_.active); });
+	connect(save, &QAction::triggered, this, [this]() { overwriteDeck(store_.active); });
 	save->setEnabled(ready_ && store_.find(store_.active) != nullptr);
 	toolsMenu_->addSeparator();
 
 	QAction *exportAll = toolsMenu_->addAction(T("DockDeck.Menu.Export"));
-	exportAll->setEnabled(ready_ && !store_.layouts.isEmpty());
-	connect(exportAll, &QAction::triggered, this, [this]() { exportLayouts(); });
+	exportAll->setEnabled(ready_ && !store_.decks.isEmpty());
+	connect(exportAll, &QAction::triggered, this, [this]() { exportDecks(); });
 	QAction *import = toolsMenu_->addAction(T("DockDeck.Menu.Import"));
 	import->setEnabled(ready_);
-	connect(import, &QAction::triggered, this, &DockDeck::importLayouts);
+	connect(import, &QAction::triggered, this, &DockDeck::importDecks);
 	toolsMenu_->addSeparator();
 
 	QAction *show = toolsMenu_->addAction(T("DockDeck.Menu.ShowStrip"));
@@ -381,15 +381,15 @@ QString DockDeck::askForName(const QString &title, const QString &initial, const
 	}
 }
 
-void DockDeck::newLayoutFromCurrent()
+void DockDeck::newDeckFromCurrent()
 {
 	if (!ready_)
 		return;
 
-	// Suggest "Layout N" with the first free number.
+	// Suggest "Deck N" with the first free number.
 	QString suggestion;
-	for (int n = static_cast<int>(store_.layouts.size()) + 1;; ++n) {
-		suggestion = T("DockDeck.NewLayoutName").arg(n);
+	for (int n = static_cast<int>(store_.decks.size()) + 1;; ++n) {
+		suggestion = T("DockDeck.NewDeckName").arg(n);
 		if (!store_.nameTaken(suggestion))
 			break;
 	}
@@ -398,52 +398,52 @@ void DockDeck::newLayoutFromCurrent()
 	if (name.isEmpty())
 		return;
 
-	// The current docks become the new layout, which becomes active. The tab
+	// The current docks become the new deck, which becomes active. The tab
 	// we came from keeps its own last saved/auto-saved arrangement.
 	if (store_.autoSave)
 		captureActive();
-	store_.layouts.append(capture(name));
+	store_.decks.append(capture(name));
 	store_.active = name;
-	obs_log(LOG_INFO, "created layout '%s'", name.toUtf8().constData());
+	obs_log(LOG_INFO, "created deck '%s'", name.toUtf8().constData());
 	saveConfig();
 	scheduleRefresh();
 }
 
-void DockDeck::overwriteLayout(const QString &name)
+void DockDeck::overwriteDeck(const QString &name)
 {
-	DockLayout *layout = store_.find(name);
-	if (!ready_ || !layout)
+	Deck *deck = store_.find(name);
+	if (!ready_ || !deck)
 		return;
 
-	// Overwriting a layout you are not looking at loses what it had, so ask.
+	// Overwriting a deck you are not looking at loses what it had, so ask.
 	if (name != store_.active &&
 	    QMessageBox::question(main_, T("DockDeck.Title"), T("DockDeck.Dialog.OverwriteConfirm").arg(name)) !=
 		    QMessageBox::Yes)
 		return;
 
-	*layout = capture(name);
-	obs_log(LOG_INFO, "saved current docks into layout '%s'", name.toUtf8().constData());
+	*deck = capture(name);
+	obs_log(LOG_INFO, "saved current docks into deck '%s'", name.toUtf8().constData());
 	saveConfig();
 }
 
-void DockDeck::renameLayout(const QString &name)
+void DockDeck::renameDeck(const QString &name)
 {
 	if (!store_.find(name))
 		return;
 
 	const QString newName = askForName(T("DockDeck.Dialog.RenameTitle"), name, name);
-	DockLayout *layout = store_.find(name); // re-lookup after the modal dialog
-	if (newName.isEmpty() || newName == name || !layout)
+	Deck *deck = store_.find(name); // re-lookup after the modal dialog
+	if (newName.isEmpty() || newName == name || !deck)
 		return;
 
-	layout->name = newName;
+	deck->name = newName;
 	if (store_.active == name)
 		store_.active = newName;
 	saveConfig();
 	scheduleRefresh();
 }
 
-void DockDeck::deleteLayout(const QString &name)
+void DockDeck::deleteDeck(const QString &name)
 {
 	if (!store_.find(name))
 		return;
@@ -455,29 +455,29 @@ void DockDeck::deleteLayout(const QString &name)
 	const qsizetype index = store_.indexOf(name);
 	if (index < 0)
 		return;
-	store_.layouts.removeAt(index);
+	store_.decks.removeAt(index);
 
 	if (store_.active == name) {
 		// Move to the neighbouring tab, like closing a browser tab. Clearing
-		// active first stops auto-save from writing into the deleted layout.
+		// active first stops auto-save from writing into the deleted deck.
 		store_.active.clear();
-		if (!store_.layouts.isEmpty()) {
-			const qsizetype next = qMin(index, store_.layouts.size() - 1);
-			switchToLayout(store_.layouts[next].name, SwitchSource::Menu);
+		if (!store_.decks.isEmpty()) {
+			const qsizetype next = qMin(index, store_.decks.size() - 1);
+			switchToDeck(store_.decks[next].name, SwitchSource::Menu);
 		}
 	}
 
-	obs_log(LOG_INFO, "deleted layout '%s'", name.toUtf8().constData());
+	obs_log(LOG_INFO, "deleted deck '%s'", name.toUtf8().constData());
 	saveConfig();
 	scheduleRefresh();
 }
 
-void DockDeck::moveLayout(int from, int to)
+void DockDeck::moveDeck(int from, int to)
 {
 	// Mirrors a drag in the tab bar; no UI rebuild (that would cancel the drag).
-	if (from < 0 || to < 0 || from >= store_.layouts.size() || to >= store_.layouts.size())
+	if (from < 0 || to < 0 || from >= store_.decks.size() || to >= store_.decks.size())
 		return;
-	store_.layouts.move(from, to);
+	store_.decks.move(from, to);
 	saveConfig();
 }
 
@@ -509,49 +509,47 @@ QString DockDeck::uniqueName(const QString &base) const
 	}
 }
 
-void DockDeck::exportLayouts(const QString &onlyName)
+void DockDeck::exportDecks(const QString &onlyName)
 {
 	if (!ready_)
 		return;
 
-	// Make sure the active layout reflects what is on screen right now.
+	// Make sure the active deck reflects what is on screen right now.
 	if (store_.autoSave)
 		captureActive();
 
-	QVector<DockLayout> layouts;
+	QVector<Deck> decks;
 	if (onlyName.isEmpty()) {
-		layouts = store_.layouts;
-	} else if (const DockLayout *layout = store_.find(onlyName)) {
-		layouts.append(*layout);
+		decks = store_.decks;
+	} else if (const Deck *deck = store_.find(onlyName)) {
+		decks.append(*deck);
 	}
-	if (layouts.isEmpty())
+	if (decks.isEmpty())
 		return;
 
-	// Suggest a file name: the layout's name (minus characters that are not
-	// allowed in file names), or a generic one for "export all".
-	QString fileName = QStringLiteral("dock-deck-layouts.json");
-	if (!onlyName.isEmpty()) {
-		QString safe = onlyName;
-		safe.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
-		fileName = QStringLiteral("dock-deck-%1.json").arg(safe.trimmed());
-	}
+	// Suggest "<Deck name>.dockdeck.json" (minus characters that are not
+	// allowed in file names), or "Deck Collection.dockdeck.json" for all.
+	QString base = onlyName.isEmpty() ? T("DockDeck.CollectionFileName") : onlyName;
+	base.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
+	const QString fileName = base.trimmed() + QStringLiteral(".dockdeck.json");
 	const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
 
-	const QString path = QFileDialog::getSaveFileName(
-		main_, T("DockDeck.Dialog.ExportTitle"), QDir(dir).filePath(fileName), T("DockDeck.Dialog.FileFilter"));
+	const QString title =
+		T(onlyName.isEmpty() ? "DockDeck.Dialog.ExportCollectionTitle" : "DockDeck.Dialog.ExportDeckTitle");
+	const QString path = QFileDialog::getSaveFileName(main_, title, QDir(dir).filePath(fileName),
+							  T("DockDeck.Dialog.FileFilter"));
 	if (path.isEmpty())
 		return;
 
 	QString error;
-	if (!LayoutFile::write(path, layouts, &error)) {
-		QMessageBox::warning(main_, T("DockDeck.Dialog.ExportTitle"),
-				     T("DockDeck.Dialog.ExportFailed").arg(path, error));
+	if (!DeckFile::write(path, decks, &error)) {
+		QMessageBox::warning(main_, title, T("DockDeck.Dialog.ExportFailed").arg(path, error));
 		return;
 	}
-	obs_log(LOG_INFO, "exported %d layout(s) to %s", static_cast<int>(layouts.size()), path.toUtf8().constData());
+	obs_log(LOG_INFO, "exported %d deck(s) to %s", static_cast<int>(decks.size()), path.toUtf8().constData());
 }
 
-void DockDeck::importLayouts()
+void DockDeck::importDecks()
 {
 	if (!ready_)
 		return;
@@ -562,19 +560,19 @@ void DockDeck::importLayouts()
 	if (path.isEmpty())
 		return;
 
-	LayoutFile::ReadResult file;
-	const LayoutFile::ReadError err = LayoutFile::read(path, &file);
-	if (err != LayoutFile::ReadError::None) {
+	DeckFile::ReadResult file;
+	const DeckFile::ReadError err = DeckFile::read(path, &file);
+	if (err != DeckFile::ReadError::None) {
 		const char *key = "DockDeck.Import.Error.Invalid";
 		switch (err) {
-		case LayoutFile::ReadError::CannotOpen:
+		case DeckFile::ReadError::CannotOpen:
 			key = "DockDeck.Import.Error.CannotOpen";
 			break;
-		case LayoutFile::ReadError::TooNew:
+		case DeckFile::ReadError::TooNew:
 			key = "DockDeck.Import.Error.TooNew";
 			break;
-		case LayoutFile::ReadError::NoLayouts:
-			key = "DockDeck.Import.Error.NoLayouts";
+		case DeckFile::ReadError::NoDecks:
+			key = "DockDeck.Import.Error.NoDecks";
 			break;
 		default:
 			break;
@@ -587,7 +585,7 @@ void DockDeck::importLayouts()
 	if (store_.autoSave)
 		captureActive();
 
-	// Docks that exist here, to report what the imported layouts can't place.
+	// Docks that exist here, to report what the imported decks can't place.
 	QSet<QString> localDocks;
 	for (QDockWidget *dock : main_->findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly))
 		localDocks.insert(dock->objectName());
@@ -600,11 +598,11 @@ void DockDeck::importLayouts()
 	enum class Choice { Ask, Replace, KeepBoth, Skip };
 	Choice remembered = Choice::Ask;
 
-	for (DockLayout layout : file.layouts) {
+	for (Deck deck : file.decks) {
 		// Case-insensitive clash, matching how names are validated.
-		DockLayout *existing = nullptr;
-		for (DockLayout &l : store_.layouts) {
-			if (l.name.compare(layout.name, Qt::CaseInsensitive) == 0) {
+		Deck *existing = nullptr;
+		for (Deck &l : store_.decks) {
+			if (l.name.compare(deck.name, Qt::CaseInsensitive) == 0) {
 				existing = &l;
 				break;
 			}
@@ -613,7 +611,7 @@ void DockDeck::importLayouts()
 		Choice choice = existing ? remembered : Choice::KeepBoth;
 		if (existing && choice == Choice::Ask) {
 			QMessageBox box(QMessageBox::Question, T("DockDeck.Dialog.ImportTitle"),
-					T("DockDeck.Import.Clash").arg(layout.name), QMessageBox::NoButton, main_);
+					T("DockDeck.Import.Clash").arg(deck.name), QMessageBox::NoButton, main_);
 			QPushButton *replaceBtn = box.addButton(T("DockDeck.Import.Replace"), QMessageBox::AcceptRole);
 			QPushButton *keepBtn = box.addButton(T("DockDeck.Import.KeepBoth"), QMessageBox::AcceptRole);
 			QPushButton *skipBtn = box.addButton(T("DockDeck.Import.Skip"), QMessageBox::RejectRole);
@@ -638,7 +636,7 @@ void DockDeck::importLayouts()
 			continue;
 		}
 
-		for (auto it = layout.docks.constBegin(); it != layout.docks.constEnd(); ++it) {
+		for (auto it = deck.docks.constBegin(); it != deck.docks.constEnd(); ++it) {
 			if (!localDocks.contains(it.key()))
 				missingDocks.insert(it.key());
 		}
@@ -646,25 +644,25 @@ void DockDeck::importLayouts()
 		if (existing && choice == Choice::Replace) {
 			// Keep the existing tab's name and position; take the docks.
 			const QString keepName = existing->name;
-			*existing = layout;
+			*existing = deck;
 			existing->name = keepName;
 			if (keepName == store_.active)
 				reapplyActive = true;
 			++replaced;
 		} else {
 			if (existing)
-				layout.name = uniqueName(layout.name);
-			store_.layouts.append(layout);
+				deck.name = uniqueName(deck.name);
+			store_.decks.append(deck);
 			++added;
 		}
 	}
 
 	// The tab you are on was replaced: show its new docks right away. Clearing
-	// active first makes switchToLayout() apply it without auto-saving over it.
+	// active first makes switchToDeck() apply it without auto-saving over it.
 	if (reapplyActive) {
 		const QString name = store_.active;
 		store_.active.clear();
-		switchToLayout(name, SwitchSource::Import);
+		switchToDeck(name, SwitchSource::Import);
 	}
 
 	obs_log(LOG_INFO, "imported from %s: %d added, %d replaced, %d skipped, %d invalid", path.toUtf8().constData(),

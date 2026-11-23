@@ -16,7 +16,7 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
-#include "layout-store.hpp"
+#include "deck-store.hpp"
 
 #include <QFile>
 #include <QJsonArray>
@@ -33,7 +33,7 @@ static constexpr const char *kExportFormat = "dock-deck-layouts";
 // Hard limits that keep a hostile or broken file from doing anything silly.
 static constexpr qint64 kMaxFileBytes = 16 * 1024 * 1024;
 static constexpr int kMaxNameLength = 100;
-static constexpr int kMaxLayouts = 500;
+static constexpr int kMaxDecks = 500;
 
 // QMainWindow::saveState() data starts with a 32-bit 0xff marker.
 static bool looksLikeMainWindowState(const QByteArray &state)
@@ -43,21 +43,21 @@ static bool looksLikeMainWindowState(const QByteArray &state)
 	       static_cast<unsigned char>(state[3]) == 0xff;
 }
 
-static QJsonObject layoutToJson(const DockLayout &layout)
+static QJsonObject deckToJson(const Deck &deck)
 {
 	QJsonObject docks;
-	for (auto it = layout.docks.constBegin(); it != layout.docks.constEnd(); ++it)
+	for (auto it = deck.docks.constBegin(); it != deck.docks.constEnd(); ++it)
 		docks.insert(it.key(), it.value());
 
 	QJsonObject o;
-	o.insert(QStringLiteral("name"), layout.name);
-	o.insert(QStringLiteral("state"), QString::fromLatin1(layout.state.toBase64()));
+	o.insert(QStringLiteral("name"), deck.name);
+	o.insert(QStringLiteral("state"), QString::fromLatin1(deck.state.toBase64()));
 	o.insert(QStringLiteral("docks"), docks);
 	return o;
 }
 
-// Strict parse of one layout entry; returns false if anything is off.
-static bool layoutFromJson(const QJsonValue &value, DockLayout *out)
+// Strict parse of one deck entry; returns false if anything is off.
+static bool deckFromJson(const QJsonValue &value, Deck *out)
 {
 	if (!value.isObject())
 		return false;
@@ -69,33 +69,33 @@ static bool layoutFromJson(const QJsonValue &value, DockLayout *out)
 	if (!name.isString() || !state.isString() || !(docks.isObject() || docks.isUndefined()))
 		return false;
 
-	DockLayout layout;
-	layout.name = name.toString().simplified();
-	if (layout.name.isEmpty() || layout.name.size() > kMaxNameLength)
+	Deck deck;
+	deck.name = name.toString().simplified();
+	if (deck.name.isEmpty() || deck.name.size() > kMaxNameLength)
 		return false;
 
 	const auto decoded =
 		QByteArray::fromBase64Encoding(state.toString().toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
 	if (!decoded || !looksLikeMainWindowState(*decoded))
 		return false;
-	layout.state = *decoded;
+	deck.state = *decoded;
 
 	const QJsonObject dockMap = docks.toObject();
 	for (auto it = dockMap.begin(); it != dockMap.end(); ++it) {
 		if (it.key().isEmpty() || !it.value().isBool())
 			return false;
-		layout.docks.insert(it.key(), it.value().toBool());
+		deck.docks.insert(it.key(), it.value().toBool());
 	}
 
-	*out = layout;
+	*out = deck;
 	return true;
 }
 
-bool LayoutFile::write(const QString &path, const QVector<DockLayout> &layouts, QString *error)
+bool DeckFile::write(const QString &path, const QVector<Deck> &decks, QString *error)
 {
 	QJsonArray arr;
-	for (const DockLayout &layout : layouts)
-		arr.append(layoutToJson(layout));
+	for (const Deck &deck : decks)
+		arr.append(deckToJson(deck));
 
 	QJsonObject root;
 	root.insert(QStringLiteral("format"), QString::fromLatin1(kExportFormat));
@@ -112,7 +112,7 @@ bool LayoutFile::write(const QString &path, const QVector<DockLayout> &layouts, 
 	return true;
 }
 
-LayoutFile::ReadError LayoutFile::read(const QString &path, ReadResult *result)
+DeckFile::ReadError DeckFile::read(const QString &path, ReadResult *result)
 {
 	QFile file(path);
 	if (!file.open(QIODevice::ReadOnly))
@@ -133,26 +133,26 @@ LayoutFile::ReadError LayoutFile::read(const QString &path, ReadResult *result)
 	if (root.value(QStringLiteral("version")).toInt(kFormatVersion) > kFormatVersion)
 		return ReadError::TooNew;
 
-	const QJsonValue layouts = root.value(QStringLiteral("layouts"));
-	if (!layouts.isArray())
-		return ReadError::NoLayouts;
+	const QJsonValue decks = root.value(QStringLiteral("layouts"));
+	if (!decks.isArray())
+		return ReadError::NoDecks;
 
 	ReadResult out;
-	for (const QJsonValue &value : layouts.toArray()) {
-		DockLayout layout;
-		if (out.layouts.size() < kMaxLayouts && layoutFromJson(value, &layout))
-			out.layouts.append(layout);
+	for (const QJsonValue &value : decks.toArray()) {
+		Deck deck;
+		if (out.decks.size() < kMaxDecks && deckFromJson(value, &deck))
+			out.decks.append(deck);
 		else
 			++out.invalidEntries;
 	}
 
-	if (out.layouts.isEmpty())
-		return ReadError::NoLayouts;
+	if (out.decks.isEmpty())
+		return ReadError::NoDecks;
 	*result = out;
 	return ReadError::None;
 }
 
-LayoutStore::LoadResult LayoutStore::load(const QString &path)
+DeckStore::LoadResult DeckStore::load(const QString &path)
 {
 	QFile file(path);
 	if (!file.exists())
@@ -176,7 +176,7 @@ LayoutStore::LoadResult LayoutStore::load(const QString &path)
 	}
 
 	const QJsonObject root = doc.object();
-	layouts.clear();
+	decks.clear();
 	active = root.value(QStringLiteral("active")).toString();
 	showTabStrip = root.value(QStringLiteral("showTabStrip")).toBool(true);
 	autoSave = root.value(QStringLiteral("autoSave")).toBool(true);
@@ -184,26 +184,26 @@ LayoutStore::LoadResult LayoutStore::load(const QString &path)
 	const QJsonArray arr = root.value(QStringLiteral("layouts")).toArray();
 	for (const QJsonValue &v : arr) {
 		const QJsonObject o = v.toObject();
-		DockLayout layout;
-		layout.name = o.value(QStringLiteral("name")).toString().trimmed();
-		if (layout.name.isEmpty() || indexOf(layout.name) >= 0)
+		Deck deck;
+		deck.name = o.value(QStringLiteral("name")).toString().trimmed();
+		if (deck.name.isEmpty() || indexOf(deck.name) >= 0)
 			continue; // skip unnamed or duplicate entries
-		layout.state = QByteArray::fromBase64(o.value(QStringLiteral("state")).toString().toLatin1());
+		deck.state = QByteArray::fromBase64(o.value(QStringLiteral("state")).toString().toLatin1());
 
 		const QJsonObject docks = o.value(QStringLiteral("docks")).toObject();
 		for (auto it = docks.begin(); it != docks.end(); ++it)
-			layout.docks.insert(it.key(), it.value().toBool());
+			deck.docks.insert(it.key(), it.value().toBool());
 
-		layouts.append(layout);
+		decks.append(deck);
 	}
 	return LoadResult::Ok;
 }
 
-bool LayoutStore::save(const QString &path) const
+bool DeckStore::save(const QString &path) const
 {
 	QJsonArray arr;
-	for (const DockLayout &layout : layouts)
-		arr.append(layoutToJson(layout));
+	for (const Deck &deck : decks)
+		arr.append(deckToJson(deck));
 
 	QJsonObject root;
 	root.insert(QStringLiteral("version"), kFormatVersion);
@@ -219,36 +219,36 @@ bool LayoutStore::save(const QString &path) const
 	return file.commit();
 }
 
-qsizetype LayoutStore::indexOf(const QString &name) const
+qsizetype DeckStore::indexOf(const QString &name) const
 {
-	for (qsizetype i = 0; i < layouts.size(); ++i) {
-		if (layouts[i].name == name)
+	for (qsizetype i = 0; i < decks.size(); ++i) {
+		if (decks[i].name == name)
 			return i;
 	}
 	return -1;
 }
 
-DockLayout *LayoutStore::find(const QString &name)
+Deck *DeckStore::find(const QString &name)
 {
 	const qsizetype i = indexOf(name);
-	return i < 0 ? nullptr : &layouts[i];
+	return i < 0 ? nullptr : &decks[i];
 }
 
-bool LayoutStore::nameTaken(const QString &name, const QString &ignore) const
+bool DeckStore::nameTaken(const QString &name, const QString &ignore) const
 {
-	for (const DockLayout &layout : layouts) {
-		if (layout.name == ignore)
+	for (const Deck &deck : decks) {
+		if (deck.name == ignore)
 			continue;
-		if (layout.name.compare(name, Qt::CaseInsensitive) == 0)
+		if (deck.name.compare(name, Qt::CaseInsensitive) == 0)
 			return true;
 	}
 	return false;
 }
 
-QStringList LayoutStore::names() const
+QStringList DeckStore::names() const
 {
 	QStringList out;
-	for (const DockLayout &layout : layouts)
-		out.append(layout.name);
+	for (const Deck &deck : decks)
+		out.append(deck.name);
 	return out;
 }

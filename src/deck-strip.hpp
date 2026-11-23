@@ -31,24 +31,24 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 class QTabBar;
 class QToolButton;
 
-class TabStrip : public QToolBar {
+class DeckStrip : public QToolBar {
 	Q_OBJECT
 
 public:
-	explicit TabStrip(QWidget *parent);
+	explicit DeckStrip(QWidget *parent);
 
-	// Rebuilds the tabs without emitting layoutActivated().
-	void setLayouts(const QStringList &names, const QString &active);
+	// Rebuilds the tabs without emitting deckActivated().
+	void setDecks(const QStringList &names, const QString &active);
 
 signals:
-	void layoutActivated(const QString &name);
-	void newLayoutRequested();
+	void deckActivated(const QString &name);
+	void newDeckRequested();
 	void overwriteRequested(const QString &name);
 	void renameRequested(const QString &name);
 	void deleteRequested(const QString &name);
 	void exportRequested(const QString &name);
 	void hideRequested();
-	void layoutMoved(int from, int to);
+	void deckMoved(int from, int to);
 
 private:
 	void showContextMenu(const QPoint &pos);

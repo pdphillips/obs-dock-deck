@@ -18,7 +18,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #pragma once
 
-// Plain data model for Dock Deck layouts plus JSON persistence.
+// Plain data model for Dock Deck decks plus JSON persistence.
+// A "Deck" is one named dock arrangement (a tab); all decks together are the
+// "Deck Collection". JSON keys still say "layouts" for backward compatibility.
 // Qt Core only: no widgets and no OBS calls, so it is easy to reason about.
 
 #include <QByteArray>
@@ -28,38 +30,38 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QVector>
 
 // One named dock arrangement.
-struct DockLayout {
+struct Deck {
 	QString name;
 
 	// Raw bytes from QMainWindow::saveState(). Stored base64 in the JSON file.
 	QByteArray state;
 
-	// objectName -> "shown" for every dock that existed when the layout was
+	// objectName -> "shown" for every dock that existed when the deck was
 	// saved. Docks that are not listed here (for example a plugin installed
-	// later) are left alone when the layout is applied.
+	// later) are left alone when the deck is applied.
 	QHash<QString, bool> docks;
 };
 
-// Export/import of layouts to a standalone JSON file, so they can be shared
-// between machines. Layouts reference docks by their internal names, so docks
+// Export/import of decks to a standalone JSON file, so they can be shared
+// between machines. Decks reference docks by their internal names, so docks
 // from plugins missing on the importing machine are simply skipped on apply.
-namespace LayoutFile {
+namespace DeckFile {
 // Writes {"format": "dock-deck-layouts", "version": 1, "layouts": [...]}.
-bool write(const QString &path, const QVector<DockLayout> &layouts, QString *error);
+bool write(const QString &path, const QVector<Deck> &decks, QString *error);
 
 struct ReadResult {
-	QVector<DockLayout> layouts; // valid entries, in file order
-	int invalidEntries = 0;      // entries that were skipped as malformed
+	QVector<Deck> decks;    // valid entries, in file order
+	int invalidEntries = 0; // entries that were skipped as malformed
 };
 
-enum class ReadError { None, CannotOpen, TooLarge, NotJson, WrongFormat, TooNew, NoLayouts };
+enum class ReadError { None, CannotOpen, TooLarge, NotJson, WrongFormat, TooNew, NoDecks };
 
 // Validates everything and never crashes on bad input. Anything other than
 // ReadError::None means nothing usable was found.
 ReadError read(const QString &path, ReadResult *result);
-} // namespace LayoutFile
+} // namespace DeckFile
 
-class LayoutStore {
+class DeckStore {
 public:
 	enum class LoadResult { Ok, Missing, Corrupt };
 
@@ -72,16 +74,16 @@ public:
 
 	// Exact-name lookup; -1 when not found.
 	qsizetype indexOf(const QString &name) const;
-	DockLayout *find(const QString &name);
+	Deck *find(const QString &name);
 
-	// Case-insensitive check used when naming layouts, so "Gaming" and
+	// Case-insensitive check used when naming decks, so "Gaming" and
 	// "gaming" can't both exist and confuse hotkeys/remote commands later.
 	bool nameTaken(const QString &name, const QString &ignore = QString()) const;
 
 	QStringList names() const;
 
-	QVector<DockLayout> layouts;
-	QString active;           // name of the active layout ("" if none)
+	QVector<Deck> decks;
+	QString active;           // name of the active deck ("" if none)
 	bool showTabStrip = true; // tab strip under the menu bar
-	bool autoSave = true;     // keep dock changes in the active layout
+	bool autoSave = true;     // keep dock changes in the active deck
 };

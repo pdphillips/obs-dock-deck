@@ -40,10 +40,10 @@ target_sources(
     src/plugin-main.cpp
     src/dock-deck.cpp
     src/dock-deck.hpp
-    src/layout-store.cpp
-    src/layout-store.hpp
-    src/tab-strip.cpp
-    src/tab-strip.hpp
+    src/deck-store.cpp
+    src/deck-store.hpp
+    src/deck-strip.cpp
+    src/deck-strip.hpp
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

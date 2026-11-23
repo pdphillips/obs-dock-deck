@@ -16,7 +16,7 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
-#include "tab-strip.hpp"
+#include "deck-strip.hpp"
 
 #include <obs-module.h>
 
@@ -37,11 +37,11 @@ static QString escapeMnemonic(QString text)
 	return text.replace(QLatin1Char('&'), QStringLiteral("&&"));
 }
 
-TabStrip::TabStrip(QWidget *parent) : QToolBar(T("DockDeck.Title"), parent)
+DeckStrip::DeckStrip(QWidget *parent) : QToolBar(T("DockDeck.Title"), parent)
 {
 	// A stable objectName lets QMainWindow::saveState() record the bar
 	// without warnings; DockDeck re-applies our own visibility setting after
-	// every restoreState(), so saved layouts can't hide or show it.
+	// every restoreState(), so saved decks can't hide or show it.
 	setObjectName(QStringLiteral("DockDeckTabStrip"));
 	setMovable(false);
 	setFloatable(false);
@@ -68,7 +68,7 @@ TabStrip::TabStrip(QWidget *parent) : QToolBar(T("DockDeck.Title"), parent)
 	addButton_ = new QToolButton(this);
 	addButton_->setObjectName(QStringLiteral("DockDeckAddButton"));
 	addButton_->setText(QStringLiteral("+"));
-	addButton_->setToolTip(T("DockDeck.NewLayout.Tooltip"));
+	addButton_->setToolTip(T("DockDeck.NewDeck.Tooltip"));
 	addButton_->setAutoRaise(true);
 	addButton_->setFocusPolicy(Qt::NoFocus);
 	addWidget(addButton_);
@@ -76,19 +76,19 @@ TabStrip::TabStrip(QWidget *parent) : QToolBar(T("DockDeck.Title"), parent)
 	connect(tabs_, &QTabBar::currentChanged, this, [this](int index) {
 		const QString name = nameAt(index);
 		if (!name.isEmpty())
-			emit layoutActivated(name);
+			emit deckActivated(name);
 	});
-	connect(tabs_, &QTabBar::tabMoved, this, &TabStrip::layoutMoved);
+	connect(tabs_, &QTabBar::tabMoved, this, &DeckStrip::deckMoved);
 	connect(tabs_, &QTabBar::tabBarDoubleClicked, this, [this](int index) {
 		const QString name = nameAt(index);
 		if (!name.isEmpty())
 			emit renameRequested(name);
 	});
-	connect(tabs_, &QWidget::customContextMenuRequested, this, &TabStrip::showContextMenu);
-	connect(addButton_, &QToolButton::clicked, this, &TabStrip::newLayoutRequested);
+	connect(tabs_, &QWidget::customContextMenuRequested, this, &DeckStrip::showContextMenu);
+	connect(addButton_, &QToolButton::clicked, this, &DeckStrip::newDeckRequested);
 }
 
-void TabStrip::setLayouts(const QStringList &names, const QString &active)
+void DeckStrip::setDecks(const QStringList &names, const QString &active)
 {
 	// Programmatic rebuilds must never look like a user click.
 	const QSignalBlocker blocker(tabs_);
@@ -106,14 +106,14 @@ void TabStrip::setLayouts(const QStringList &names, const QString &active)
 	tabs_->setCurrentIndex(activeIndex < 0 ? -1 : static_cast<int>(activeIndex));
 }
 
-QString TabStrip::nameAt(int index) const
+QString DeckStrip::nameAt(int index) const
 {
 	if (index < 0 || index >= tabs_->count())
 		return QString();
 	return tabs_->tabData(index).toString();
 }
 
-void TabStrip::showContextMenu(const QPoint &pos)
+void DeckStrip::showContextMenu(const QPoint &pos)
 {
 	const QString name = nameAt(tabs_->tabAt(pos));
 	QMenu menu(this);
@@ -129,8 +129,8 @@ void TabStrip::showContextMenu(const QPoint &pos)
 			[this, name]() { emit exportRequested(name); });
 		menu.addSeparator();
 	}
-	connect(menu.addAction(T("DockDeck.Menu.New")), &QAction::triggered, this, &TabStrip::newLayoutRequested);
-	connect(menu.addAction(T("DockDeck.Menu.HideStrip")), &QAction::triggered, this, &TabStrip::hideRequested);
+	connect(menu.addAction(T("DockDeck.Menu.New")), &QAction::triggered, this, &DeckStrip::newDeckRequested);
+	connect(menu.addAction(T("DockDeck.Menu.HideStrip")), &QAction::triggered, this, &DeckStrip::hideRequested);
 
 	menu.exec(tabs_->mapToGlobal(pos));
 }
