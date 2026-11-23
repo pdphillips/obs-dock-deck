@@ -1,4 +1,4 @@
-autoload -Uz log_error log_status log_info mkcd
+autoload -Uz log_error log_status log_info log_warning mkcd
 
 if (( ! ${+project_root} )) {
   log_error "'project_root' not set. Please set before running ${0}."
@@ -35,14 +35,30 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
     sudo apt-get install ${apt_args} gcc-${${target##*-}//_/-}-linux-gnu g++-${${target##*-}//_/-}-linux-gnu
   }
 
-  sudo add-apt-repository --yes ppa:obsproject/obs-studio
-  sudo apt update
+  # Launchpad's PPA intermittently answers HTTP 503. When that happens apt
+  # silently falls back to Ubuntu's own obs-studio package, which has no
+  # libobs CMake config, and configure fails later with a confusing error.
+  # Retry until the PPA's build is the install candidate, or fail clearly.
+  local obs_candidate=''
+  local -i attempt
+  for attempt ({1..6}) {
+    sudo add-apt-repository --yes --no-update ppa:obsproject/obs-studio || true
+    sudo apt-get -o Acquire::Retries=3 update || true
+    obs_candidate="$(apt-cache policy obs-studio | awk '/Candidate:/ { print $2 }')"
+    if [[ ${obs_candidate} == *obsproject* ]] break
+    log_warning "OBS PPA not reachable yet (candidate: '${obs_candidate}'), retry ${attempt}/6..."
+    sleep $(( attempt * 15 ))
+  }
+  if [[ ${obs_candidate} != *obsproject* ]] {
+    log_error "Could not get obs-studio from ppa:obsproject/obs-studio (candidate: '${obs_candidate}')."
+    return 2
+  }
 
   sudo apt-get install ${apt_args} \
     build-essential \
     libgles2-mesa-dev \
     libsimde-dev \
-    obs-studio
+    obs-studio=${obs_candidate}
 
   local -a _qt_packages=()
 
