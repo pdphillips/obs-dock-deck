@@ -83,7 +83,8 @@ static QString currentCollectionName()
 static void onSourceRename(void *data, calldata_t *cd)
 {
 	auto *source = static_cast<obs_source_t *>(calldata_ptr(cd, "source"));
-	if (!source || !obs_source_is_scene(source))
+	// A removed scene renamed by a pack's Replace is not a rename to follow.
+	if (!source || !obs_source_is_scene(source) || obs_source_removed(source))
 		return;
 	const QString newName = QString::fromUtf8(calldata_string(cd, "new_name"));
 	const QString oldName = QString::fromUtf8(calldata_string(cd, "prev_name"));
@@ -162,6 +163,7 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 	connect(strip_, &DeckStrip::renameRequested, this, &DockDeck::renameDeck);
 	connect(strip_, &DeckStrip::deleteRequested, this, &DockDeck::deleteDeck);
 	connect(strip_, &DeckStrip::exportRequested, this, [this](const QString &name) { exportDecks(name); });
+	connect(strip_, &DeckStrip::packExportRequested, this, [this](const QString &name) { exportPack(name); });
 	connect(strip_, &DeckStrip::hideRequested, this, [this]() { setTabStripVisible(false); });
 	connect(strip_, &DeckStrip::deckMoved, this, &DockDeck::moveDeck);
 	connect(strip_, &DeckStrip::lockToggled, this, &DockDeck::toggleLock);
@@ -808,6 +810,12 @@ void DockDeck::rebuildToolsMenu()
 	QAction *import = toolsMenu_->addAction(T("DockDeck.Menu.Import"));
 	import->setEnabled(ready_);
 	connect(import, &QAction::triggered, this, &DockDeck::importDecks);
+	QAction *exportPackAction = toolsMenu_->addAction(T("DockDeck.Menu.ExportPack"));
+	exportPackAction->setEnabled(ready_);
+	connect(exportPackAction, &QAction::triggered, this, [this]() { exportPack(); });
+	QAction *importPackAction = toolsMenu_->addAction(T("DockDeck.Menu.ImportPack"));
+	importPackAction->setEnabled(ready_);
+	connect(importPackAction, &QAction::triggered, this, &DockDeck::importPack);
 	toolsMenu_->addSeparator();
 
 	QAction *show = toolsMenu_->addAction(T("DockDeck.Menu.ShowStrip"));
@@ -1353,6 +1361,37 @@ void DockDeck::exportDecks(const QString &onlyName)
 	obs_log(LOG_INFO, "exported %d deck(s) to %s", static_cast<int>(decks.size()), path.toUtf8().constData());
 }
 
+bool DockDeck::mergeImportedDeck(Deck deck, bool replace, bool *reapplyActive)
+{
+	// Case-insensitive clash, matching how names are validated.
+	Deck *existing = nullptr;
+	for (Deck &l : store_.decks) {
+		if (l.name.compare(deck.name, Qt::CaseInsensitive) == 0) {
+			existing = &l;
+			break;
+		}
+	}
+	if (existing && replace) {
+		// Keep the existing tab's name and position; take the docks.
+		const QString keepName = existing->name;
+		const QString keepId = existing->id; // keeps its hotkey binding
+		*existing = deck;
+		existing->name = keepName;
+		existing->id = keepId;
+		if (keepName == store_.active)
+			*reapplyActive = true;
+		return true;
+	}
+	if (existing)
+		deck.name = uniqueName(deck.name);
+	// Same id as a deck here (e.g. re-importing a copy): new id.
+	if (store_.idTaken(deck.id))
+		deck.id.clear();
+	store_.decks.append(deck);
+	store_.ensureIds();
+	return false;
+}
+
 void DockDeck::importDecks()
 {
 	if (!ready_)
@@ -1447,26 +1486,10 @@ void DockDeck::importDecks()
 				missingDocks.insert(deck.titles.value(it.key(), it.key()));
 		}
 
-		if (existing && choice == Choice::Replace) {
-			// Keep the existing tab's name and position; take the docks.
-			const QString keepName = existing->name;
-			const QString keepId = existing->id; // keeps its hotkey binding
-			*existing = deck;
-			existing->name = keepName;
-			existing->id = keepId;
-			if (keepName == store_.active)
-				reapplyActive = true;
+		if (mergeImportedDeck(deck, choice == Choice::Replace, &reapplyActive))
 			++replaced;
-		} else {
-			if (existing)
-				deck.name = uniqueName(deck.name);
-			// Same id as a deck here (e.g. re-importing a copy): new id.
-			if (store_.idTaken(deck.id))
-				deck.id.clear();
-			store_.decks.append(deck);
-			store_.ensureIds();
+		else
 			++added;
-		}
 	}
 
 	// The tab you are on was replaced: show its new docks right away. Clearing

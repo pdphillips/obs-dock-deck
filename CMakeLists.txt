@@ -47,6 +47,12 @@ target_sources(
     src/deck-hotkeys.cpp
     src/deck-websocket.cpp
     src/deck-websocket.hpp
+    src/pack-zip.cpp
+    src/pack-zip.hpp
+    src/pack-core.cpp
+    src/pack-core.hpp
+    src/deck-pack.cpp
+    src/deck-pack.hpp
     src/obs-websocket-api.h
 )
 

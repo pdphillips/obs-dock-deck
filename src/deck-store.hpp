@@ -27,6 +27,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHash>
 #include <QString>
 #include <QStringList>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QVector>
 
 // One named dock arrangement.
@@ -64,6 +66,10 @@ struct Deck {
 // between machines. Decks reference docks by their internal names, so docks
 // from plugins missing on the importing machine are simply skipped on apply.
 namespace DeckFile {
+// One deck as JSON and back (validated; used by export files and packs).
+QJsonObject toJson(const Deck &deck);
+bool fromJson(const QJsonValue &value, Deck *out);
+
 // Writes {"format": "dock-deck-layouts", "version": 1, "layouts": [...]}.
 bool write(const QString &path, const QVector<Deck> &decks, QString *error);
 

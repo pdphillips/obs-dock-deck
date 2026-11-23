@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.5.0)
+## Features (v0.6.0)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -22,11 +22,13 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
   **+** to save the current docks as a new Deck. Drag tabs to reorder them.
 - **Right-click a Deck tab**: *Lock Deck* / *Unlock Deck*,
   *Save Current Docks Into This Deck*,
-  *Rename Deck...*, *Delete Deck...*, *Export Deck...*. Double-click a tab to
+  *Rename Deck...*, *Delete Deck...*, *Export Deck...*, *Export Deck Pack...*.
+  Double-click a tab to
   rename it.
 - **Tools → Dock Deck**: switch Decks, *New Deck From Current Docks...*,
   *Lock All Decks* / *Unlock All Decks*, *Export Deck Collection...*,
-  *Import Decks...*, and the settings
+  *Import Decks...*, *Export Deck Pack...*, *Import Deck Pack...*, and the
+  settings
   *Show Deck Tabs*, *Remember Dock Changes Per Deck* and
   *Show Placeholders for Missing Docks*.
 - **Deck locking**: each tab has a small padlock; click it to lock or unlock
@@ -114,6 +116,64 @@ files from 0.2.x (no titles / no lock: imported unlocked); older versions read
 
 If the file is ever unreadable it is kept as `layouts.json.bad`, and Dock Deck
 starts fresh with a single **Main** Deck.
+
+## Deck packs
+
+A Deck pack (`*.dockdeck`) is one file with one or more Decks plus, if you
+want, the scenes, sources and media files they use, so a whole setup can be
+shared or moved to another computer. Plain *Export Deck...* /
+*Export Deck Collection...* (`*.dockdeck.json`, docks only) still work as
+before.
+
+**Export** (Tools → Dock Deck → *Export Deck Pack...*, or right-click a Deck
+tab → *Export Deck Pack...*, which pre-selects that Deck): a checklist grouped
+as **Decks / Scenes / Sources / Media files**, with a *Select all / none* box
+and an all/none box per group (both tri-state). Checking something checks
+what it needs: a Deck's linked scene, a scene's sources, nested scenes and
+groups (recursively), and the files those sources use. Media files show their
+size, and the total is shown at the bottom. Uncheck anything you don't want,
+for example purchased overlays: the source is still exported, just without
+its file. Packs over 500 MB ask first; the limit is 4 GB. The file is written
+in the background with a progress bar (and *Cancel*), so OBS doesn't freeze.
+Afterwards a summary lists what was left out for privacy, sources exported
+without their file, and settings that contain web addresses (check these
+don't contain private links).
+
+**Import** (Tools → Dock Deck → *Import Deck Pack...*): the same checklist,
+everything checked. Names that already exist are marked, and each one gets
+its own choice: **Rename** (default; adds " (2)"), **Skip** (keep and use the
+existing one) or **Replace** (the existing scene/source is removed; for Decks,
+the existing tab takes the imported docks). Media files are copied in the
+background to `plugin_config/obs-dock-deck/media/<pack name>/` (an existing
+file of the same name is never overwritten) and the sources point there.
+Media you uncheck, or that wasn't in the pack, leaves the source with an empty
+file setting; the summary lists those sources ("open their properties to pick
+one"), sources renamed because of a clash, and source types whose plugin isn't
+installed. Decks keep their lock state and their linked scene; the link
+follows a renamed scene and is set for the scene collection you import into.
+
+### What is never in a pack
+
+- Any setting whose name contains a word like *password*, *passwd*, *pwd*,
+  *passphrase*, *secret*, *token*, *auth*/*oauth*/*authorization*, *cookie*,
+  *credential*, *session*, *bearer*, *jwt*, or that ends in *key*
+  (*stream_key*, *apiKey*, *private_key*, ...). Names are split on `_`, `-`,
+  `.` and camelCase, so *key_color* (a chroma key colour) is kept. This applies
+  to settings, nested settings, filter settings and private settings.
+- The same names as parameters inside web addresses
+  (`...?token=...` is removed, `...?theme=dark` stays) and logins inside
+  addresses (`rtmp://user:password@host` becomes `rtmp://host`).
+- Hotkey bindings, source ids (uuids) and absolute file paths (media are
+  copied in and re-pointed, or left empty).
+- Never read at all: `service.json` (stream key / server), profiles, OBS's
+  own settings and the browser source's cookies and local storage (those live
+  in the OBS profile folder, not in source settings).
+
+Known limits: media must be files referenced by full path in source or filter
+settings (folders such as an image slideshow's list are exported without
+their files); sources that come with no scene don't stay after import (OBS
+removes unused sources); packs are plain ZIP files without compression, at
+most 4 GB.
 
 ## Linked scenes
 
@@ -271,6 +331,9 @@ optional fade will too.
 | `src/deck-store.*` | Deck data model, config load/save, export/import file format |
 | `src/deck-hotkeys.cpp` | Frontend hotkeys and their saved bindings (`hotkeys.json`) |
 | `src/deck-websocket.*` | obs-websocket vendor `dock-deck` (requests + `DeckChanged` event) |
+| `src/deck-pack.*` | Deck pack export/import dialogs, background copying |
+| `src/pack-core.*` | Pack contents: scanning scenes/sources/media, secret scrubbing, re-creating sources |
+| `src/pack-zip.*` | Minimal ZIP (stored) writer/reader with CRC checks |
 | `src/obs-websocket-api.h` | obs-websocket's header-only plugin API (GPL-2.0+, unmodified apart from formatting) |
 | `tools/dockdeck-remote.py` | Command-line test client for the vendor requests |
 
@@ -301,7 +364,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.5.0)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.6.0)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -317,6 +380,36 @@ cmake --build --preset windows-x64 --config RelWithDebInfo
 Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
+
+## Manual test checklist (0.6.0)
+
+Deck packs (use a throwaway scene collection: Scene Collection → New):
+1. Make a scene "Pack Test" with an Image source, a Media Source pointing at a
+   video, and a nested scene or group. Link a Deck to "Pack Test" and lock it.
+2. Right-click that Deck → *Export Deck Pack...*: the Deck, "Pack Test", its
+   sources, nested scene/group and both files are pre-checked; sizes shown.
+   Try *Select all / none* and the group boxes. Uncheck the video, export.
+3. Summary lists the Media Source as exported without its file.
+4. Import the pack (same collection): "Pack Test" and the Deck are marked as
+   existing; leave *Rename*. Result: "Pack Test (2)", Deck "<name> (2)" locked
+   and linked to "Pack Test (2)"; the image points into
+   `plugin_config/obs-dock-deck/media/<pack>/`; the Media Source has no file and
+   is listed in the summary.
+5. Import again choosing *Skip* for everything that exists: nothing duplicated.
+   Once more with *Replace* for "Pack Test": the old scene is replaced (still
+   only one "Pack Test", now the pack's copy).
+6. Copy the pack to the other computer and import it: scenes, sources, media,
+   Deck lock and scene link arrive.
+7. Privacy: add a Browser source with URL
+   `https://example.com/?token=SECRET123&theme=dark`, export it with its
+   scene, then run the command below: it prints `clean`, the summary lists the
+   token under "Left out for privacy", and the imported source's URL is
+   `https://example.com/?theme=dark`.
+8. A pack over 500 MB asks before exporting; the progress bar can be cancelled.
+
+```bash
+unzip -p "<pack>.dockdeck" manifest.json | grep -E 'SECRET123|/home/|[A-Z]:(\\\\|/)' || echo clean
+```
 
 ## Manual test checklist (0.5.0)
 
@@ -420,7 +513,7 @@ GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every pu
    switching (bots like Streamer.bot/SAMMI can expose it to chat moderators).
 4. ✅ Linked scenes: selecting a Deck switches OBS to its linked scene (per
    scene collection; Preview in Studio Mode).
-5. Deck packs: export/import a Deck together with selected scenes, sources and
+5. ✅ Deck packs: export/import a Deck together with selected scenes, sources and
    media files. Per-item checkboxes on both export and import, plus a master
    *Select all / none* checkbox and per-group (scenes, sources, media)
    all/none checkboxes (tri-state). Media that is left out (for example

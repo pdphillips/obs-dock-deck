@@ -301,6 +301,16 @@ bool DeckStore::ensureIds()
 	return changed;
 }
 
+QJsonObject DeckFile::toJson(const Deck &deck)
+{
+	return deckToJson(deck);
+}
+
+bool DeckFile::fromJson(const QJsonValue &value, Deck *out)
+{
+	return deckFromJson(value, out);
+}
+
 bool DeckStore::save(const QString &path) const
 {
 	QJsonArray arr;

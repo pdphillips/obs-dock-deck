@@ -210,6 +210,8 @@ void DeckStrip::showContextMenu(const QPoint &pos)
 			[this, name]() { emit deleteRequested(name); });
 		connect(menu.addAction(T("DockDeck.Menu.ExportOne")), &QAction::triggered, this,
 			[this, name]() { emit exportRequested(name); });
+		connect(menu.addAction(T("DockDeck.Menu.ExportPackOne")), &QAction::triggered, this,
+			[this, name]() { emit packExportRequested(name); });
 		menu.addSeparator();
 		// Linked scene: selecting this deck switches OBS to it.
 		const QString scene = currentScene ? currentScene() : QString();

@@ -148,6 +148,12 @@ private:
 	void moveDeck(int from, int to);
 	void exportDecks(const QString &onlyName = QString());
 	void importDecks();
+	// Adds an imported deck (a clash with Keep Both gets "Name (2)") or, with
+	// `replace`, takes over the same-named deck's docks. True if replaced.
+	bool mergeImportedDeck(Deck deck, bool replace, bool *reapplyActive);
+	// Deck packs (deck-pack.cpp): decks plus scenes, sources and media.
+	void exportPack(const QString &onlyName = QString());
+	void importPack();
 	void setTabStripVisible(bool visible);
 	void setAutoSave(bool enabled);
 
