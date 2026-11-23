@@ -32,6 +32,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QInputDialog>
+#include <QLabel>
 #include <QMainWindow>
 #include <QMenu>
 #include <QMessageBox>
@@ -42,6 +43,15 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
+#include <QVBoxLayout>
+
+// Marks our own stand-in docks so they are never mistaken for real ones.
+static constexpr const char *kPlaceholderProperty = "dockDeckPlaceholder";
+
+static bool isPlaceholder(const QObject *obj)
+{
+	return obj->property(kPlaceholderProperty).toBool();
+}
 
 static QString T(const char *key)
 {
@@ -189,7 +199,7 @@ bool DockDeck::switchToDeck(const QString &name, SwitchSource source)
 }
 
 // Snapshot the main window's current dock arrangement.
-Deck DockDeck::capture(const QString &name) const
+Deck DockDeck::capture(const QString &name, const Deck *previous) const
 {
 	Deck deck;
 	deck.name = name;
@@ -198,22 +208,46 @@ Deck DockDeck::capture(const QString &name) const
 	// Only docks that belong to the main window itself; floating docks keep
 	// the main window as parent, so they are included too. A dock's "shown"
 	// state is its Docks-menu checkmark (toggleViewAction), which stays true
-	// for docks that are merely behind another tab.
+	// for docks that are merely behind another tab. Placeholders count as the
+	// dock they stand in for (same objectName, title = the real dock's title).
 	const auto docks = main_->findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
 	for (QDockWidget *dock : docks) {
-		if (!dock->objectName().isEmpty())
-			deck.docks.insert(dock->objectName(), dock->toggleViewAction()->isChecked());
+		const QString id = dock->objectName();
+		if (id.isEmpty())
+			continue;
+		deck.docks.insert(id, dock->toggleViewAction()->isChecked());
+		const QString title = dock->windowTitle().simplified();
+		if (!title.isEmpty())
+			deck.titles.insert(id, title);
+	}
+
+	// Keep what we knew about docks that aren't here right now.
+	if (previous) {
+		for (auto it = previous->docks.constBegin(); it != previous->docks.constEnd(); ++it) {
+			if (!deck.docks.contains(it.key()))
+				deck.docks.insert(it.key(), it.value());
+		}
+		for (auto it = previous->titles.constBegin(); it != previous->titles.constEnd(); ++it) {
+			if (!deck.titles.contains(it.key()))
+				deck.titles.insert(it.key(), it.value());
+		}
 	}
 	return deck;
 }
 
-// Apply a saved arrangement. Missing docks are skipped, never fatal.
+// Apply a saved arrangement. Missing docks are skipped (or get placeholders),
+// never fatal.
 void DockDeck::apply(const Deck &deck)
 {
 	const QScopedValueRollback<bool> guard(applying_, true);
 
-	// restoreState() ignores docks it doesn't know and keeps placeholders for
-	// saved docks that don't exist right now, so a missing plugin is harmless.
+	// Placeholders must exist before restoreState() so Qt can put them where
+	// the missing docks were; ones the new deck doesn't need are removed so
+	// they don't linger on screen.
+	syncPlaceholders(&deck);
+
+	// restoreState() ignores docks it doesn't know and keeps slots for saved
+	// docks that don't exist right now, so a missing plugin is harmless.
 	if (!deck.state.isEmpty() && !main_->restoreState(deck.state))
 		obs_log(LOG_WARNING, "deck '%s': Qt could not restore the saved dock state",
 			deck.name.toUtf8().constData());
@@ -233,11 +267,187 @@ void DockDeck::apply(const Deck &deck)
 		strip_->setVisible(store_.showTabStrip);
 }
 
+// ---------------------------------------------------------------------------
+// Placeholders for missing docks
+//
+// A deck can name docks that don't exist right now: a plugin that isn't
+// installed (yet), a browser dock from another computer, or a plugin that
+// creates its dock late. For each such dock that the deck shows, we add a
+// plain QDockWidget with the same objectName before restoreState(), so Qt
+// puts it exactly where the real dock would go and the arrangement keeps its
+// shape. It is not registered with OBS (no Docks-menu entry). Because it uses
+// the real dock's objectName, anything that saves the window state (OBS's own
+// dock state on exit, our auto-save) records the real dock's spot, which is
+// exactly what we want once the real dock is back.
+//
+// When the real dock shows up later (we watch the main window for new child
+// widgets), adoptRealDocks() swaps it into the placeholder's spot.
+// ---------------------------------------------------------------------------
+
+QHash<QString, QDockWidget *> DockDeck::realDocks() const
+{
+	QHash<QString, QDockWidget *> out;
+	const auto docks = main_->findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly);
+	for (QDockWidget *dock : docks) {
+		if (!isPlaceholder(dock) && !dock->objectName().isEmpty())
+			out.insert(dock->objectName(), dock);
+	}
+	return out;
+}
+
+void DockDeck::syncPlaceholders(const Deck *deck)
+{
+	const QHash<QString, QDockWidget *> real = realDocks();
+
+	// Which docks need a stand-in: shown in this deck and missing here.
+	QHash<QString, QString> needed; // objectName -> title
+	if (deck && store_.showPlaceholders) {
+		for (auto it = deck->docks.constBegin(); it != deck->docks.constEnd(); ++it) {
+			if (it.value() && !real.contains(it.key()))
+				needed.insert(it.key(), deck->titles.value(it.key()));
+		}
+	}
+
+	// Remove stale ones first (also ones whose real dock has appeared).
+	const QStringList current = placeholders_.keys();
+	for (const QString &name : current) {
+		if (!needed.contains(name) || !placeholders_.value(name))
+			removePlaceholder(name);
+	}
+
+	for (auto it = needed.constBegin(); it != needed.constEnd(); ++it) {
+		if (!placeholders_.value(it.key()))
+			placeholders_.insert(it.key(), createPlaceholder(it.key(), it.value()));
+	}
+}
+
+QDockWidget *DockDeck::createPlaceholder(const QString &name, const QString &title)
+{
+	const QString shown = title.isEmpty() ? name : title;
+
+	// Title = the real dock's title, so auto-save keeps the friendly name.
+	auto *dock = new QDockWidget(shown, main_);
+	dock->setObjectName(name);
+	dock->setProperty(kPlaceholderProperty, true);
+
+	auto *body = new QWidget(dock);
+	auto *layout = new QVBoxLayout(body);
+	auto *text = new QLabel(T("DockDeck.Placeholder.Text").arg(shown), body);
+	text->setTextFormat(Qt::PlainText);
+	text->setWordWrap(true);
+	text->setAlignment(Qt::AlignCenter);
+	QFont bold = text->font();
+	bold.setBold(true);
+	text->setFont(bold);
+
+	auto *hint = new QLabel(T("DockDeck.Placeholder.Hint"), body);
+	hint->setTextFormat(Qt::PlainText);
+	hint->setWordWrap(true);
+	hint->setAlignment(Qt::AlignCenter);
+	hint->setEnabled(false); // themes render disabled text muted
+
+	layout->addStretch();
+	layout->addWidget(text);
+	layout->addWidget(hint);
+	layout->addStretch();
+	dock->setWidget(body);
+
+	main_->addDockWidget(Qt::RightDockWidgetArea, dock);
+	obs_log(LOG_INFO, "placeholder for missing dock '%s'", name.toUtf8().constData());
+	return dock;
+}
+
+void DockDeck::removePlaceholder(const QString &name)
+{
+	QPointer<QDockWidget> dock = placeholders_.take(name);
+	if (!dock)
+		return;
+	// Take it out of the layout and drop its name right away, so a later
+	// restoreState() can't match the dying placeholder instead of the real dock.
+	main_->removeDockWidget(dock);
+	dock->setObjectName(QString());
+	delete dock.data();
+}
+
+void DockDeck::scheduleAdopt()
+{
+	if (adoptQueued_)
+		return;
+	adoptQueued_ = true;
+	// Run after the code that created the dock has finished setting it up
+	// (objectName, title, addDockWidget all happen in one go in OBS).
+	QTimer::singleShot(0, this, &DockDeck::adoptRealDocks);
+}
+
+void DockDeck::adoptRealDocks()
+{
+	adoptQueued_ = false;
+	if (!ready_ || applying_ || placeholders_.isEmpty())
+		return;
+
+	struct Swap {
+		QString name;
+		QDockWidget *real;
+		bool shown;
+	};
+	QVector<Swap> swaps;
+	const QHash<QString, QDockWidget *> real = realDocks();
+	for (auto it = placeholders_.constBegin(); it != placeholders_.constEnd(); ++it) {
+		if (it.value() && real.contains(it.key()))
+			swaps.append({it.key(), real.value(it.key()), it.value()->toggleViewAction()->isChecked()});
+	}
+	if (swaps.isEmpty())
+		return;
+
+	const QScopedValueRollback<bool> guard(applying_, true);
+
+	// Snapshot the window with each real dock briefly renamed, so the entry
+	// saved under the dock's name is the placeholder's position. Nothing else
+	// runs in between, so OBS never sees the temporary names.
+	for (const Swap &s : swaps)
+		s.real->setObjectName(s.name + QStringLiteral("#dockdeck-adopting"));
+	const QByteArray state = main_->saveState();
+	for (const Swap &s : swaps)
+		s.real->setObjectName(s.name);
+
+	// Swap: drop the placeholders, then let Qt move the real docks into place.
+	for (const Swap &s : swaps)
+		removePlaceholder(s.name);
+	main_->restoreState(state);
+	for (const Swap &s : swaps) {
+		if (s.real->toggleViewAction()->isChecked() != s.shown)
+			s.real->setVisible(s.shown);
+		obs_log(LOG_INFO, "dock '%s' appeared; moved it into its deck position", s.name.toUtf8().constData());
+	}
+	if (strip_)
+		strip_->setVisible(store_.showTabStrip);
+
+	if (store_.autoSave) {
+		captureActive();
+		saveConfig();
+	}
+}
+
+void DockDeck::setShowPlaceholders(bool enabled)
+{
+	store_.showPlaceholders = enabled;
+	if (ready_) {
+		// Keep current positions (placeholders included) before changing.
+		if (store_.autoSave)
+			captureActive();
+		if (const Deck *active = store_.find(store_.active); active && enabled)
+			apply(*active); // creates placeholders and puts them in place
+		else
+			syncPlaceholders(nullptr); // removes them all
+	}
+	saveConfig();
+}
+
 void DockDeck::captureActive()
 {
 	Deck *active = store_.find(store_.active);
 	if (active)
-		*active = capture(active->name);
+		*active = capture(active->name, active);
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +492,9 @@ bool DockDeck::eventFilter(QObject *watched, QEvent *event)
 		captureActive();
 		saveConfig();
 	}
+	// A new child of the main window may be a dock we hold a placeholder for.
+	if (watched == main_ && event->type() == QEvent::ChildAdded && ready_ && !placeholders_.isEmpty())
+		scheduleAdopt();
 	return QObject::eventFilter(watched, event);
 }
 
@@ -359,6 +572,12 @@ void DockDeck::rebuildToolsMenu()
 	autoSave->setChecked(store_.autoSave);
 	autoSave->setToolTip(T("DockDeck.Menu.AutoSave.Tooltip"));
 	connect(autoSave, &QAction::toggled, this, &DockDeck::setAutoSave);
+
+	QAction *placeholders = toolsMenu_->addAction(T("DockDeck.Menu.Placeholders"));
+	placeholders->setCheckable(true);
+	placeholders->setChecked(store_.showPlaceholders);
+	placeholders->setToolTip(T("DockDeck.Menu.Placeholders.Tooltip"));
+	connect(placeholders, &QAction::toggled, this, &DockDeck::setShowPlaceholders);
 	toolsMenu_->setToolTipsVisible(true);
 }
 
@@ -402,7 +621,7 @@ void DockDeck::newDeckFromCurrent()
 	// we came from keeps its own last saved/auto-saved arrangement.
 	if (store_.autoSave)
 		captureActive();
-	store_.decks.append(capture(name));
+	store_.decks.append(capture(name, store_.find(store_.active)));
 	store_.active = name;
 	obs_log(LOG_INFO, "created deck '%s'", name.toUtf8().constData());
 	saveConfig();
@@ -421,7 +640,7 @@ void DockDeck::overwriteDeck(const QString &name)
 		    QMessageBox::Yes)
 		return;
 
-	*deck = capture(name);
+	*deck = capture(name, deck);
 	obs_log(LOG_INFO, "saved current docks into deck '%s'", name.toUtf8().constData());
 	saveConfig();
 }
@@ -586,9 +805,8 @@ void DockDeck::importDecks()
 		captureActive();
 
 	// Docks that exist here, to report what the imported decks can't place.
-	QSet<QString> localDocks;
-	for (QDockWidget *dock : main_->findChildren<QDockWidget *>(QString(), Qt::FindDirectChildrenOnly))
-		localDocks.insert(dock->objectName());
+	// (placeholders don't count: they stand in for docks that are missing).
+	const QHash<QString, QDockWidget *> localDocks = realDocks();
 	QSet<QString> missingDocks;
 
 	int added = 0, replaced = 0, skipped = 0;

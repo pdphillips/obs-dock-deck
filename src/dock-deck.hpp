@@ -23,11 +23,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "deck-store.hpp"
 
+#include <QHash>
 #include <QObject>
 #include <QPointer>
 #include <QString>
 
 class QAction;
+class QDockWidget;
 class QMainWindow;
 class QMenu;
 class DeckStrip;
@@ -58,8 +60,20 @@ protected:
 	bool eventFilter(QObject *watched, QEvent *event) override;
 
 private:
-	Deck capture(const QString &name) const;
+	// Snapshot the current docks. Entries from `previous` for docks that
+	// don't exist right now are carried over, so a missing plugin's dock is
+	// not forgotten just because the deck was auto-saved meanwhile.
+	Deck capture(const QString &name, const Deck *previous = nullptr) const;
 	void apply(const Deck &deck);
+
+	// Placeholders for missing docks (see dock-deck.cpp for the full story).
+	QHash<QString, QDockWidget *> realDocks() const;
+	void syncPlaceholders(const Deck *deck);
+	QDockWidget *createPlaceholder(const QString &name, const QString &title);
+	void removePlaceholder(const QString &name);
+	void scheduleAdopt();
+	void adoptRealDocks();
+	void setShowPlaceholders(bool enabled);
 	void captureActive();
 	void saveConfig();
 	void scheduleRefresh();
@@ -90,4 +104,8 @@ private:
 	bool ready_ = false;    // OBS finished loading and the active deck was applied
 	bool applying_ = false; // re-entrancy guard for switchToDeck()
 	bool refreshQueued_ = false;
+	bool adoptQueued_ = false;
+
+	// objectName -> placeholder dock currently standing in for it.
+	QHash<QString, QPointer<QDockWidget>> placeholders_;
 };
