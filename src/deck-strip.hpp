@@ -28,6 +28,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QString>
 #include <QStringList>
 #include <QToolBar>
+#include <QVector>
+
+#include <functional>
 
 class QTabBar;
 class QToolButton;
@@ -38,9 +41,18 @@ class DeckStrip : public QToolBar {
 public:
 	explicit DeckStrip(QWidget *parent);
 
-	// Rebuilds the tabs without emitting deckActivated(). `locked` holds the
-	// names of locked decks (shown with a closed padlock).
-	void setDecks(const QStringList &names, const QSet<QString> &locked, const QString &active);
+	struct Tab {
+		QString name;
+		bool locked = false;
+		QString linkedScene; // in the current scene collection; "" = none
+		bool sceneMissing = false;
+	};
+
+	// Rebuilds the tabs without emitting deckActivated().
+	void setDecks(const QVector<Tab> &tabs, const QString &active);
+
+	// Name of OBS's current scene, shown in "Link to Current Scene".
+	std::function<QString()> currentScene;
 
 signals:
 	void deckActivated(const QString &name);
@@ -50,6 +62,8 @@ signals:
 	void deleteRequested(const QString &name);
 	void exportRequested(const QString &name);
 	void lockToggled(const QString &name);
+	void linkSceneRequested(const QString &name);
+	void unlinkSceneRequested(const QString &name);
 	void hideRequested();
 	void deckMoved(int from, int to);
 
@@ -59,5 +73,6 @@ private:
 
 	QTabBar *tabs_ = nullptr;
 	QToolButton *addButton_ = nullptr;
-	QSet<QString> locked_;
+	QVector<Tab> tabInfo_;
+	const Tab *tabFor(const QString &name) const;
 };

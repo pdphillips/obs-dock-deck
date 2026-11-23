@@ -69,7 +69,26 @@ static QJsonObject deckToJson(const Deck &deck)
 	}
 	if (deck.locked)
 		o.insert(QStringLiteral("locked"), true);
+	if (!deck.scenes.isEmpty()) {
+		QJsonObject scenes;
+		for (auto it = deck.scenes.constBegin(); it != deck.scenes.constEnd(); ++it)
+			scenes.insert(it.key(), it.value());
+		o.insert(QStringLiteral("scenes"), scenes);
+	}
 	return o;
+}
+
+// Scene links are optional: bad entries are dropped, never fatal.
+static QHash<QString, QString> scenesFromJson(const QJsonValue &value)
+{
+	QHash<QString, QString> scenes;
+	const QJsonObject map = value.toObject();
+	for (auto it = map.begin(); it != map.end(); ++it) {
+		const QString scene = it.value().toString();
+		if (!it.key().isEmpty() && !scene.isEmpty() && it.key().size() <= 256 && scene.size() <= 256)
+			scenes.insert(it.key(), scene);
+	}
+	return scenes;
 }
 
 // Titles are cosmetic: bad entries are dropped instead of rejecting the deck.
@@ -121,6 +140,7 @@ static bool deckFromJson(const QJsonValue &value, Deck *out)
 	}
 	deck.titles = titlesFromJson(o.value(QStringLiteral("titles")));
 	deck.locked = o.value(QStringLiteral("locked")).toBool(false); // non-bool: unlocked
+	deck.scenes = scenesFromJson(o.value(QStringLiteral("scenes")));
 
 	*out = deck;
 	return true;
@@ -231,6 +251,7 @@ DeckStore::LoadResult DeckStore::load(const QString &path)
 			deck.docks.insert(it.key(), it.value().toBool());
 		deck.titles = titlesFromJson(o.value(QStringLiteral("titles")));
 		deck.locked = o.value(QStringLiteral("locked")).toBool(false);
+		deck.scenes = scenesFromJson(o.value(QStringLiteral("scenes")));
 		const QString id = o.value(QStringLiteral("id")).toString().trimmed();
 		if (id.size() <= 64)
 			deck.id = id;

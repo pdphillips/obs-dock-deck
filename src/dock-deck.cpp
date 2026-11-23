@@ -61,6 +61,37 @@ static bool isPlaceholder(const QObject *obj)
 	return obj->property(kPlaceholderProperty).toBool();
 }
 
+static bool sceneExists(const QString &name)
+{
+	if (name.isEmpty())
+		return false;
+	obs_source_t *source = obs_get_source_by_name(name.toUtf8().constData());
+	const bool ok = source && obs_source_is_scene(source);
+	obs_source_release(source);
+	return ok;
+}
+
+static QString currentCollectionName()
+{
+	char *name = obs_frontend_get_current_scene_collection();
+	const QString out = QString::fromUtf8(name ? name : "");
+	bfree(name);
+	return out;
+}
+
+// libobs "source_rename" (any thread): scene renames are queued to the UI.
+static void onSourceRename(void *data, calldata_t *cd)
+{
+	auto *source = static_cast<obs_source_t *>(calldata_ptr(cd, "source"));
+	if (!source || !obs_source_is_scene(source))
+		return;
+	const QString newName = QString::fromUtf8(calldata_string(cd, "new_name"));
+	const QString oldName = QString::fromUtf8(calldata_string(cd, "prev_name"));
+	auto *self = static_cast<DockDeck *>(data);
+	QMetaObject::invokeMethod(
+		self, [self, oldName, newName]() { self->onSourceRenamed(oldName, newName); }, Qt::QueuedConnection);
+}
+
 static QString T(const char *key)
 {
 	return QString::fromUtf8(obs_module_text(key));
@@ -134,6 +165,16 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 	connect(strip_, &DeckStrip::hideRequested, this, [this]() { setTabStripVisible(false); });
 	connect(strip_, &DeckStrip::deckMoved, this, &DockDeck::moveDeck);
 	connect(strip_, &DeckStrip::lockToggled, this, &DockDeck::toggleLock);
+	strip_->currentScene = []() {
+		obs_source_t *scene = obs_frontend_get_current_scene();
+		const QString name = QString::fromUtf8(scene ? obs_source_get_name(scene) : "");
+		obs_source_release(scene);
+		return name;
+	};
+	connect(strip_, &DeckStrip::linkSceneRequested, this,
+		[this](const QString &name) { setDeckScene(name, strip_ ? strip_->currentScene() : QString()); });
+	connect(strip_, &DeckStrip::unlinkSceneRequested, this,
+		[this](const QString &name) { setDeckScene(name, QString()); });
 
 	// Tools > Dock Deck submenu (switch decks, toggle the strip, options).
 	// It is rebuilt each time it opens so it always matches the deck list.
@@ -198,7 +239,7 @@ void DockDeck::publishSnapshot()
 	Snapshot snap;
 	snap.ready = ready_;
 	for (const Deck &deck : store_.decks)
-		snap.decks.append({deck.id, deck.name, deck.locked});
+		snap.decks.append({deck.id, deck.name, deck.locked, linkedScene(deck)});
 	if (const Deck *active = store_.find(store_.active))
 		snap.activeId = active->id;
 	QMutexLocker lock(&snapshotMutex_);
@@ -232,8 +273,12 @@ bool DockDeck::switchToDeck(const QString &name, SwitchSource source)
 		return true;
 	}
 
-	if (name == store_.active)
+	// Picking the deck you are on (hotkey, remote) still selects its scene.
+	if (name == store_.active) {
+		if (source != SwitchSource::Startup && source != SwitchSource::Import)
+			activateLinkedScene(name);
 		return true;
+	}
 
 	// Keep the dock changes made on the tab we are leaving.
 	if (store_.autoSave)
@@ -252,6 +297,8 @@ bool DockDeck::switchToDeck(const QString &name, SwitchSource source)
 	obs_log(LOG_INFO, "switched to deck '%s' (%s)", name.toUtf8().constData(), sourceName(source));
 	saveConfig();
 	scheduleRefresh();
+	if (source != SwitchSource::Startup && source != SwitchSource::Import)
+		activateLinkedScene(name);
 	if (const Deck *now = store_.find(name))
 		DeckWebsocket::emitDeckChanged(now->name, now->id, sourceName(source));
 	return true;
@@ -565,6 +612,7 @@ void DockDeck::captureActive()
 		Deck fresh = capture(active->name, active);
 		fresh.id = active->id;
 		fresh.locked = active->locked;
+		fresh.scenes = active->scenes;
 		*active = fresh;
 	}
 }
@@ -575,6 +623,9 @@ void DockDeck::captureActive()
 
 void DockDeck::onFinishedLoading()
 {
+	currentCollection_ = currentCollectionName();
+	signal_handler_connect(obs_get_signal_handler(), "source_rename", onSourceRename, this);
+
 	// Defer one event-loop turn so plugins that add docks in their own
 	// FINISHED_LOADING handler have done so before we restore.
 	QTimer::singleShot(0, this, [this]() {
@@ -603,6 +654,7 @@ void DockDeck::onExit()
 {
 	// Remote requests stop first: they must not queue work during teardown.
 	DeckWebsocket::shutdown();
+	signal_handler_disconnect(obs_get_signal_handler(), "source_rename", onSourceRename, this);
 
 	// Dock state was already captured on the Close event; just write it out.
 	if (ready_)
@@ -695,12 +747,16 @@ void DockDeck::refreshUi()
 {
 	if (!strip_)
 		return;
-	QSet<QString> locked;
+	QVector<DeckStrip::Tab> tabs;
 	for (const Deck &deck : store_.decks) {
-		if (deck.locked)
-			locked.insert(deck.name);
+		DeckStrip::Tab tab;
+		tab.name = deck.name;
+		tab.locked = deck.locked;
+		tab.linkedScene = linkedScene(deck);
+		tab.sceneMissing = !tab.linkedScene.isEmpty() && !sceneExists(tab.linkedScene);
+		tabs.append(tab);
 	}
-	strip_->setDecks(store_.names(), locked, store_.active);
+	strip_->setDecks(tabs, store_.active);
 }
 
 void DockDeck::rebuildToolsMenu()
@@ -937,6 +993,7 @@ void DockDeck::overwriteDeck(const QString &name)
 	Deck fresh = capture(name, deck);
 	fresh.id = deck->id;
 	fresh.locked = deck->locked;
+	fresh.scenes = deck->scenes;
 	*deck = fresh;
 	obs_log(LOG_INFO, "saved current docks into deck '%s'", name.toUtf8().constData());
 	saveConfig();
@@ -1120,6 +1177,125 @@ void DockDeck::setAllLocked(bool locked)
 		updateLock();
 	saveConfig();
 	scheduleRefresh();
+}
+
+// ---------------------------------------------------------------------------
+// Linked scenes
+//
+// A deck can link one scene per scene collection (stored in the deck, so it
+// follows renames of the deck and travels with exports). Selecting the deck
+// (tab, menu, hotkey, obs-websocket) switches OBS to that scene, unless it is
+// already showing or no longer exists. In Studio Mode the scene goes to the
+// Preview instead, so picking a deck never cuts the live Program; the
+// transition stays in your hands. Startup and import never change scenes.
+// Scene renames are followed (libobs "source_rename"); deleted scenes just
+// stop switching and show as missing in the tab tooltip.
+// ---------------------------------------------------------------------------
+
+QString DockDeck::linkedScene(const Deck &deck) const
+{
+	return deck.scenes.value(currentCollection_);
+}
+
+void DockDeck::activateLinkedScene(const QString &deckName)
+{
+	const Deck *deck = store_.find(deckName);
+	if (!deck)
+		return;
+	const QString scene = linkedScene(*deck);
+	if (scene.isEmpty())
+		return;
+
+	obs_source_t *source = obs_get_source_by_name(scene.toUtf8().constData());
+	if (!source || !obs_source_is_scene(source)) {
+		obs_source_release(source);
+		obs_log(LOG_INFO, "deck '%s': linked scene '%s' not found; not switching scenes",
+			deckName.toUtf8().constData(), scene.toUtf8().constData());
+		return;
+	}
+
+	const bool studio = obs_frontend_preview_program_mode_active();
+	obs_source_t *current = studio ? obs_frontend_get_current_preview_scene() : obs_frontend_get_current_scene();
+	if (current != source) {
+		if (studio)
+			obs_frontend_set_current_preview_scene(source);
+		else
+			obs_frontend_set_current_scene(source);
+		obs_log(LOG_INFO, "deck '%s': switched %s to scene '%s'", deckName.toUtf8().constData(),
+			studio ? "preview" : "program", scene.toUtf8().constData());
+	}
+	obs_source_release(current);
+	obs_source_release(source);
+}
+
+bool DockDeck::setDeckScene(const QString &name, const QString &scene)
+{
+	Deck *deck = store_.find(name);
+	if (!deck || currentCollection_.isEmpty())
+		return false;
+	if (scene.isEmpty()) {
+		deck->scenes.remove(currentCollection_);
+		obs_log(LOG_INFO, "deck '%s': scene link removed", name.toUtf8().constData());
+	} else {
+		if (!sceneExists(scene))
+			return false;
+		deck->scenes.insert(currentCollection_, scene);
+		obs_log(LOG_INFO, "deck '%s': linked to scene '%s'", name.toUtf8().constData(),
+			scene.toUtf8().constData());
+	}
+	saveConfig();
+	scheduleRefresh();
+	return true;
+}
+
+void DockDeck::onSourceRenamed(const QString &oldName, const QString &newName)
+{
+	if (currentCollection_.isEmpty() || oldName == newName)
+		return;
+	bool changed = false;
+	for (Deck &deck : store_.decks) {
+		auto it = deck.scenes.find(currentCollection_);
+		if (it != deck.scenes.end() && it.value() == oldName) {
+			it.value() = newName;
+			changed = true;
+		}
+	}
+	if (changed) {
+		obs_log(LOG_INFO, "scene '%s' renamed to '%s'; deck links follow", oldName.toUtf8().constData(),
+			newName.toUtf8().constData());
+		saveConfig();
+		scheduleRefresh();
+	}
+}
+
+void DockDeck::onFrontendEvent(enum obs_frontend_event event)
+{
+	switch (event) {
+	case OBS_FRONTEND_EVENT_SCENE_COLLECTION_RENAMED: {
+		// OBS doesn't say the old name; it is the one we last saw.
+		const QString now = currentCollectionName();
+		if (!currentCollection_.isEmpty() && !now.isEmpty() && now != currentCollection_) {
+			for (Deck &deck : store_.decks) {
+				if (deck.scenes.contains(currentCollection_))
+					deck.scenes.insert(now, deck.scenes.take(currentCollection_));
+			}
+			currentCollection_ = now;
+			saveConfig();
+		}
+		scheduleRefresh();
+		break;
+	}
+	case OBS_FRONTEND_EVENT_SCENE_COLLECTION_CHANGED:
+		currentCollection_ = currentCollectionName();
+		publishSnapshot();
+		scheduleRefresh();
+		break;
+	case OBS_FRONTEND_EVENT_SCENE_LIST_CHANGED:
+		scheduleRefresh(); // a linked scene may have appeared or gone
+		break;
+	default:
+		break;
+	}
 }
 
 // ---------------------------------------------------------------------------

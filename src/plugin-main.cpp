@@ -58,6 +58,7 @@ static void on_frontend_event(enum obs_frontend_event event, void *)
 		g_deck->onExit();
 		break;
 	default:
+		g_deck->onFrontendEvent(event);
 		break;
 	}
 }

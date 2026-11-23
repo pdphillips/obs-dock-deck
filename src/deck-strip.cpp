@@ -131,9 +131,9 @@ DeckStrip::DeckStrip(QWidget *parent) : QToolBar(T("DockDeck.Title"), parent)
 	connect(addButton_, &QToolButton::clicked, this, &DeckStrip::newDeckRequested);
 }
 
-void DeckStrip::setDecks(const QStringList &names, const QSet<QString> &locked, const QString &active)
+void DeckStrip::setDecks(const QVector<Tab> &tabs, const QString &active)
 {
-	locked_ = locked;
+	tabInfo_ = tabs;
 
 	// Programmatic rebuilds must never look like a user click.
 	const QSignalBlocker blocker(tabs_);
@@ -141,13 +141,22 @@ void DeckStrip::setDecks(const QStringList &names, const QSet<QString> &locked, 
 	while (tabs_->count() > 0)
 		tabs_->removeTab(0);
 
-	for (const QString &name : names) {
+	int activeIndex = -1;
+	for (const Tab &tab : tabs) {
+		const QString &name = tab.name;
 		const int index = tabs_->addTab(escapeMnemonic(name));
 		tabs_->setTabData(index, name); // the real name, unescaped
-		tabs_->setTabToolTip(index, name);
+		QString tip = name;
+		if (!tab.linkedScene.isEmpty())
+			tip += QStringLiteral("\n") +
+			       T(tab.sceneMissing ? "DockDeck.Scene.TooltipMissing" : "DockDeck.Scene.Tooltip")
+				       .arg(tab.linkedScene);
+		tabs_->setTabToolTip(index, tip);
+		if (name == active)
+			activeIndex = index;
 
 		// Padlock button on the tab: click toggles the deck's lock.
-		const bool isLocked = locked.contains(name);
+		const bool isLocked = tab.locked;
 		auto *lock = new QToolButton(tabs_);
 		lock->setObjectName(QStringLiteral("DockDeckLockButton"));
 		lock->setAutoRaise(true);
@@ -163,8 +172,16 @@ void DeckStrip::setDecks(const QStringList &names, const QSet<QString> &locked, 
 		tabs_->setTabButton(index, QTabBar::RightSide, lock);
 	}
 
-	const qsizetype activeIndex = names.indexOf(active);
-	tabs_->setCurrentIndex(activeIndex < 0 ? -1 : static_cast<int>(activeIndex));
+	tabs_->setCurrentIndex(activeIndex);
+}
+
+const DeckStrip::Tab *DeckStrip::tabFor(const QString &name) const
+{
+	for (const Tab &tab : tabInfo_) {
+		if (tab.name == name)
+			return &tab;
+	}
+	return nullptr;
 }
 
 QString DeckStrip::nameAt(int index) const
@@ -180,7 +197,8 @@ void DeckStrip::showContextMenu(const QPoint &pos)
 	QMenu menu(this);
 
 	if (!name.isEmpty()) {
-		const bool isLocked = locked_.contains(name);
+		const Tab *info = tabFor(name);
+		const bool isLocked = info && info->locked;
 		connect(menu.addAction(isLocked ? T("DockDeck.Menu.Unlock") : T("DockDeck.Menu.Lock")),
 			&QAction::triggered, this, [this, name]() { emit lockToggled(name); });
 		QAction *overwrite = menu.addAction(T("DockDeck.Menu.Overwrite"));
@@ -192,6 +210,18 @@ void DeckStrip::showContextMenu(const QPoint &pos)
 			[this, name]() { emit deleteRequested(name); });
 		connect(menu.addAction(T("DockDeck.Menu.ExportOne")), &QAction::triggered, this,
 			[this, name]() { emit exportRequested(name); });
+		menu.addSeparator();
+		// Linked scene: selecting this deck switches OBS to it.
+		const QString scene = currentScene ? currentScene() : QString();
+		QAction *link = menu.addAction(scene.isEmpty()
+						       ? T("DockDeck.Menu.LinkSceneNone")
+						       : T("DockDeck.Menu.LinkScene").arg(escapeMnemonic(scene)));
+		link->setEnabled(!scene.isEmpty() && !(info && info->linkedScene == scene && !info->sceneMissing));
+		connect(link, &QAction::triggered, this, [this, name]() { emit linkSceneRequested(name); });
+		if (info && !info->linkedScene.isEmpty()) {
+			connect(menu.addAction(T("DockDeck.Menu.UnlinkScene").arg(escapeMnemonic(info->linkedScene))),
+				&QAction::triggered, this, [this, name]() { emit unlinkSceneRequested(name); });
+		}
 		menu.addSeparator();
 	}
 	connect(menu.addAction(T("DockDeck.Menu.New")), &QAction::triggered, this, &DeckStrip::newDeckRequested);

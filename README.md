@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.4.0)
+## Features (v0.5.0)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -62,6 +62,8 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
   it or close the panel. When the real dock appears, it moves into that spot and
   the placeholder disappears. Switching to a Deck that doesn't use the dock
   removes the placeholder.
+- **Linked scenes**: a Deck can be linked to a scene; selecting the Deck then
+  switches OBS to that scene (see [Linked scenes](#linked-scenes)).
 - **Hotkeys** for every Deck, Next / Previous Deck and Toggle Lock (see
   [Hotkeys](#hotkeys)).
 - **Remote control** through obs-websocket for Streamer.bot, SAMMI, Touch
@@ -105,12 +107,38 @@ where `state` is base64 `QMainWindow::saveState()` data, `docks` maps each
 dock name to shown/hidden, and `titles` (optional, new in 0.2.2) maps each dock
 name to its title, and `locked` (optional, new in 0.3.0, written only when
 `true`) marks a locked Deck, and `id` (new in 0.4.0) is the Deck's permanent
-id. Decks without an id get one when loaded. Import also accepts a copied `layouts.json` and
+id. Decks without an id get one when loaded. `scenes` (optional, new in 0.5.0)
+maps scene collection name to the linked scene. Import also accepts a copied `layouts.json` and
 files from 0.2.x (no titles / no lock: imported unlocked); older versions read
 0.3.0 files too and simply ignore the lock.
 
 If the file is ever unreadable it is kept as `layouts.json.bad`, and Dock Deck
 starts fresh with a single **Main** Deck.
+
+## Linked scenes
+
+Right-click a Deck tab → **Link to Current Scene ("<scene>")** links the Deck
+to the scene OBS is showing right now; **Unlink Scene** removes it. The tab's
+tooltip shows the linked scene.
+
+- Selecting the Deck from a tab, the Tools menu, a hotkey or obs-websocket
+  switches OBS to the linked scene, unless that scene is already showing.
+  Pressing a Deck's hotkey while that Deck is already selected also brings
+  back its scene.
+- **Studio Mode**: the scene is put in **Preview** instead, so picking a Deck
+  never cuts your live Program. You do the transition as usual.
+- Links are per scene collection: a Deck can have one scene in each
+  collection. In a collection without a link, selecting the Deck only changes
+  the docks.
+- Renaming a scene or a scene collection keeps the link. If the scene is
+  deleted, the Deck just stops switching scenes, and its tooltip says the scene
+  is missing. Link it again, or unlink it.
+- OBS starting up and importing Decks never change the scene.
+- Links travel with exports (*Export Deck...*, *Export Deck Collection...*)
+  and come back on import. On another computer they only work if the scene
+  collection and scene have the same names.
+- Dock Deck does not switch Decks when you change scenes. Links go one way
+  only: Deck → scene.
 
 ## Hotkeys
 
@@ -135,11 +163,16 @@ Send requests with obs-websocket's `CallVendorRequest`. Each answer has
 
 | Request | Request data | Answer |
 | --- | --- | --- |
-| `GetDecks` | none | `decks: [{name, id, locked, active}]`, `activeName`, `activeId` |
-| `GetCurrentDeck` | none | `name`, `id`, `locked` |
+| `GetDecks` | none | `decks: [{name, id, locked, linkedScene, active}]`, `activeName`, `activeId` |
+| `GetCurrentDeck` | none | `name`, `id`, `locked`, `linkedScene` |
 | `SetCurrentDeck` | `{"name": "Gaming"}` or `{"id": "..."}` | the Deck switched to |
 | `NextDeck` / `PreviousDeck` | none | the Deck switched to (wraps around) |
 | `SetDeckLocked` | `{"name": "Gaming", "locked": true}` (or `"id"`) | `name`, `id`, `locked` |
+| `SetDeckScene` | `{"name": "Gaming", "scene": "Gameplay"}` (or `"id"`; `"scene": ""` unlinks) | `name`, `id`, `linkedScene` |
+
+`linkedScene` is the Deck's scene in the current scene collection (`""` if
+none). `SetCurrentDeck`, `NextDeck` and `PreviousDeck` also switch to the
+Deck's linked scene, just like clicking its tab.
 
 Names match exactly first, then ignoring upper/lower case. `id` is better for
 bots because it doesn't change when a Deck is renamed (get it from `GetDecks`).
@@ -199,6 +232,8 @@ python tools/dockdeck-remote.py --password YOUR_PASSWORD list
 python tools/dockdeck-remote.py --password YOUR_PASSWORD switch "Main"
 python tools/dockdeck-remote.py --password YOUR_PASSWORD next
 python tools/dockdeck-remote.py --password YOUR_PASSWORD lock "Main"
+python tools/dockdeck-remote.py --password YOUR_PASSWORD scene "Main" "Scene"
+python tools/dockdeck-remote.py --password YOUR_PASSWORD scene "Main" ""
 python tools/dockdeck-remote.py --password YOUR_PASSWORD watch
 ```
 
@@ -266,7 +301,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.4.0)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.5.0)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -283,7 +318,28 @@ Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
 
-## Manual test checklist (0.4.0)
+## Manual test checklist (0.5.0)
+
+Linked scenes:
+1. Go to scene "A", right-click a Deck tab → *Link to Current Scene ("A")*.
+   Hover the tab: the tooltip says *Scene: A*.
+2. Go to another scene and another Deck, then click the linked Deck's tab: OBS
+   switches to scene A. Click a Deck without a link: the scene stays as it is.
+3. Press the linked Deck's hotkey while on it but showing another scene: OBS
+   goes back to A. `python tools/dockdeck-remote.py ... switch "<Deck>"` does
+   the same; `list` shows `linkedScene`.
+4. Studio Mode on: clicking the linked Deck puts A in Preview; Program
+   doesn't change.
+5. Rename scene A: the tooltip shows the new name and the link still works.
+   Delete it: the tooltip says it's missing, clicking the tab only changes the
+   docks, and nothing crashes.
+6. Switch to another scene collection: the Deck has no link there (tooltip
+   has no scene line). Switch back: the link is there again. Rename the
+   collection: the link stays.
+7. Export the Deck, delete it, import it: the link is back. Restart OBS: the
+   scene doesn't change on startup.
+
+From 0.4.0:
 
 Hotkeys:
 1. **Settings → Hotkeys**: find *Dock Deck: Switch to <Deck>* for every Deck plus
@@ -362,7 +418,8 @@ GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every pu
    export/import, placeholders for missing docks, Deck locking).
 3. ✅ Per-Deck hotkeys (Stream Deck) and obs-websocket vendor requests for remote
    switching (bots like Streamer.bot/SAMMI can expose it to chat moderators).
-4. Link Decks to scenes and scene collections for automatic switching.
+4. ✅ Linked scenes: selecting a Deck switches OBS to its linked scene (per
+   scene collection; Preview in Studio Mode).
 5. Deck packs: export/import a Deck together with selected scenes, sources and
    media files. Per-item checkboxes on both export and import, plus a master
    *Select all / none* checkbox and per-group (scenes, sources, media)

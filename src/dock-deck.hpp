@@ -26,6 +26,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QHash>
 #include <QMutex>
 #include <QVector>
+#include <obs-frontend-api.h>
 #include <obs.h>
 #include <QObject>
 #include <QPointer>
@@ -61,6 +62,9 @@ public:
 	bool stepDeck(int delta, SwitchSource source);
 	// Lock or unlock a deck by name. UI thread only.
 	bool setDeckLocked(const QString &name, bool locked);
+	// Link a deck to a scene in the current scene collection ("" unlinks).
+	// UI thread only.
+	bool setDeckScene(const QString &name, const QString &scene);
 
 	// Thread-safe copy of the deck list for remote requests, which arrive on
 	// obs-websocket's thread and must never wait for the UI thread.
@@ -68,6 +72,7 @@ public:
 		QString id;
 		QString name;
 		bool locked = false;
+		QString linkedScene; // in the current scene collection
 	};
 	struct Snapshot {
 		bool ready = false;
@@ -79,6 +84,10 @@ public:
 	// Called from the OBS frontend event callback.
 	void onFinishedLoading();
 	void onExit();
+	void onFrontendEvent(enum obs_frontend_event event);
+
+	// A source was renamed (libobs signal, queued to the UI thread).
+	void onSourceRenamed(const QString &oldName, const QString &newName);
 
 	// Hotkey plumbing called from libobs callbacks (UI thread, queued).
 	void onHotkey(obs_hotkey_id id);
@@ -115,6 +124,11 @@ private:
 	void setAllLocked(bool locked);
 	void saveConfig();
 	void publishSnapshot();
+
+	// Linked scenes (see dock-deck.cpp "Linked scenes").
+	QString linkedScene(const Deck &deck) const;
+	void activateLinkedScene(const QString &deckName);
+	QString currentCollection_; // last known scene collection name
 
 	// Hotkeys (deck-hotkeys.cpp): one "Switch to <deck>" per deck plus
 	// Next / Previous / Toggle Lock. Bindings are stored per deck id.

@@ -53,6 +53,11 @@ struct Deck {
 	// floated or closed) and are never auto-saved. Optional in files: decks
 	// saved before 0.3.0 are unlocked.
 	bool locked = false;
+
+	// Optional linked scene per scene collection (collection name -> scene
+	// name). Selecting the deck switches OBS to that scene if it exists in
+	// the current collection. New in 0.5.0.
+	QHash<QString, QString> scenes;
 };
 
 // Export/import of decks to a standalone JSON file, so they can be shared

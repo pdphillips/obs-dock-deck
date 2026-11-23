@@ -22,6 +22,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 //   SetCurrentDeck  {name | id}           -> name, id
 //   NextDeck / PreviousDeck               -> name, id (the deck switched to)
 //   SetDeckLocked   {name | id, locked}   -> name, id, locked
+//   SetDeckScene    {name | id, scene}    -> name, id, linkedScene ("" unlinks)
+// Every deck in an answer has: name, id, locked, linkedScene (in the current
+// scene collection, "" if none).
 // Event: DeckChanged {name, id, source}
 //
 // Requests arrive on obs-websocket's thread. They read DockDeck's
@@ -62,6 +65,7 @@ void putDeck(obs_data_t *o, const DeckInfo &deck)
 	obs_data_set_string(o, "name", deck.name.toUtf8().constData());
 	obs_data_set_string(o, "id", deck.id.toUtf8().constData());
 	obs_data_set_bool(o, "locked", deck.locked);
+	obs_data_set_string(o, "linkedScene", deck.linkedScene.toUtf8().constData());
 }
 
 // Common start of every request: DockDeck alive and OBS done loading.
@@ -243,6 +247,51 @@ void setDeckLocked(obs_data_t *req, obs_data_t *res, void *)
 	obs_data_set_bool(res, "ok", true);
 }
 
+void setDeckScene(obs_data_t *req, obs_data_t *res, void *)
+{
+	DockDeck *target;
+	Snapshot snap;
+	if (!begin(res, &target, &snap))
+		return;
+	const qsizetype i = resolve(snap, req, res);
+	if (i < 0)
+		return;
+	obs_data_item_t *item = obs_data_item_byname(req, "scene");
+	const bool valid = item && obs_data_item_gettype(item) == OBS_DATA_STRING;
+	obs_data_item_release(&item);
+	if (!valid) {
+		fail(res, "Give \"scene\": a scene name, or \"\" to unlink");
+		return;
+	}
+	const QString scene = QString::fromUtf8(obs_data_get_string(req, "scene")).trimmed();
+	if (!scene.isEmpty()) {
+		// Source lookups are thread-safe in libobs.
+		obs_source_t *source = obs_get_source_by_name(scene.toUtf8().constData());
+		const bool isScene = source && obs_source_is_scene(source);
+		obs_source_release(source);
+		if (!isScene) {
+			fail(res, "No scene with that name in the current scene collection");
+			return;
+		}
+	}
+	const QString id = snap.decks[i].id;
+	QMetaObject::invokeMethod(
+		target,
+		[target, id, scene]() {
+			for (const DeckInfo &deck : target->snapshot().decks) {
+				if (deck.id == id) {
+					target->setDeckScene(deck.name, scene);
+					break;
+				}
+			}
+		},
+		Qt::QueuedConnection);
+	DeckInfo result = snap.decks[i];
+	result.linkedScene = scene;
+	putDeck(res, result);
+	obs_data_set_bool(res, "ok", true);
+}
+
 } // namespace
 
 void DeckWebsocket::registerVendor(DockDeck *deck)
@@ -257,8 +306,9 @@ void DeckWebsocket::registerVendor(DockDeck *deck)
 		obs_websocket_request_callback_function fn;
 	};
 	const Request requests[] = {
-		{"GetDecks", getDecks}, {"GetCurrentDeck", getCurrentDeck}, {"SetCurrentDeck", setCurrentDeck},
-		{"NextDeck", nextDeck}, {"PreviousDeck", previousDeck},     {"SetDeckLocked", setDeckLocked},
+		{"GetDecks", getDecks},         {"GetCurrentDeck", getCurrentDeck}, {"SetCurrentDeck", setCurrentDeck},
+		{"NextDeck", nextDeck},         {"PreviousDeck", previousDeck},     {"SetDeckLocked", setDeckLocked},
+		{"SetDeckScene", setDeckScene},
 	};
 	for (const Request &r : requests) {
 		if (!obs_websocket_vendor_register_request(vendor, r.type, r.fn, nullptr))
