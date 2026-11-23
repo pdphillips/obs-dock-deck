@@ -28,8 +28,8 @@
             }
         }
     },
-    "name": "obs-dock-layouts",
-    "displayName": "Dock Layouts",
+    "name": "obs-dock-deck",
+    "displayName": "DockDeck",
     "version": "0.1.0",
     "author": "Paul Phillips",
     "website": "",

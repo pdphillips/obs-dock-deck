@@ -1,5 +1,5 @@
 /*
-Dock Layouts for OBS
+DockDeck for OBS
 Copyright (C) 2026 Paul Phillips
 
 This program is free software; you can redistribute it and/or modify
@@ -28,23 +28,23 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
-static constexpr const char *kDockId = "obs-dock-layouts-main";
+static constexpr const char *kDockId = "obs-dock-deck-main";
 
 const char *obs_module_name(void)
 {
-	return "Dock Layouts";
+	return "DockDeck";
 }
 
 const char *obs_module_description(void)
 {
-	return obs_module_text("DockLayouts.Description");
+	return obs_module_text("DockDeck.Description");
 }
 
 static QWidget *create_placeholder_dock(QWidget *parent)
 {
 	auto *widget = new QWidget(parent);
 	auto *layout = new QVBoxLayout(widget);
-	auto *label = new QLabel(QString::fromUtf8(obs_module_text("DockLayouts.Placeholder")), widget);
+	auto *label = new QLabel(QString::fromUtf8(obs_module_text("DockDeck.Placeholder")), widget);
 	label->setWordWrap(true);
 	label->setAlignment(Qt::AlignCenter);
 	layout->addWidget(label);
@@ -56,7 +56,7 @@ bool obs_module_load(void)
 	auto *main_window = static_cast<QMainWindow *>(obs_frontend_get_main_window());
 	QWidget *dock = create_placeholder_dock(main_window);
 
-	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("DockLayouts.Title"), dock)) {
+	if (!obs_frontend_add_dock_by_id(kDockId, obs_module_text("DockDeck.Title"), dock)) {
 		obs_log(LOG_WARNING, "failed to add placeholder dock '%s'", kDockId);
 		delete dock;
 	}

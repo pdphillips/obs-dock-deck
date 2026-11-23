@@ -1,4 +1,6 @@
-# Dock Layouts for OBS
+# DockDeck for OBS
+
+Switch OBS dock layouts with one-click tabs, hotkeys, Stream Deck, or scene changes. Lightweight, Windows + Linux.
 
 Save your OBS dock arrangements as named layouts and switch between them from a
 slim tab strip under the menu bar. Windows and Linux. GPL-2.0-or-later.
@@ -9,7 +11,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 ## Status
 
 Milestone 1: an empty plugin that logs on load/unload and adds a placeholder
-**Dock Layouts** dock (Docks menu).
+**DockDeck** dock (Docks menu).
 
 ## Build on Linux (against the system OBS)
 
@@ -21,25 +23,25 @@ cmake --preset ubuntu-x86_64
 cmake --build --preset ubuntu-x86_64
 ```
 
-Output: `build_x86_64/obs-dock-layouts.so`
+Output: `build_x86_64/obs-dock-deck.so`
 
 ## Install for testing on Linux (per user, no sudo)
 
 ```bash
-D=~/.config/obs-studio/plugins/obs-dock-layouts
+D=~/.config/obs-studio/plugins/obs-dock-deck
 mkdir -p "$D/bin/64bit" "$D/data"
-install -m755 build_x86_64/obs-dock-layouts.so "$D/bin/64bit/"
+install -m755 build_x86_64/obs-dock-deck.so "$D/bin/64bit/"
 cp -r data/. "$D/data/"
 ```
 
 Restart OBS, then check the newest log:
 
 ```bash
-grep -h 'obs-dock-layouts' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
+grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-layouts] plugin loaded successfully (version 0.1.0)`,
-and **Docks → Dock Layouts** should be listed.
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.1.0)`,
+and **Docks → DockDeck** should be listed.
 
 ## Build on Windows
 
@@ -51,9 +53,9 @@ cmake --preset windows-x64
 cmake --build --preset windows-x64 --config RelWithDebInfo
 ```
 
-Copy the built `obs-dock-layouts.dll` to
-`C:\ProgramData\obs-studio\plugins\obs-dock-layouts\bin\64bit\` and `data\` to
-`C:\ProgramData\obs-studio\plugins\obs-dock-layouts\data\`.
+Copy the built `obs-dock-deck.dll` to
+`C:\ProgramData\obs-studio\plugins\obs-dock-deck\bin\64bit\` and `data\` to
+`C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
 
 ## CI
 
