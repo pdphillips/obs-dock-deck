@@ -28,10 +28,13 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QDir>
 #include <QDockWidget>
 #include <QCheckBox>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QLineEdit>
+#include <QListWidget>
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QInputDialog>
 #include <QLabel>
 #include <QMainWindow>
 #include <QMouseEvent>
@@ -711,19 +714,116 @@ void DockDeck::rebuildToolsMenu()
 // User actions
 // ---------------------------------------------------------------------------
 
-QString DockDeck::askForName(const QString &title, const QString &initial, const QString &ignore)
+QString DockDeck::askForName(const QString &title, const QString &initial, const QString &ignore, bool *importChosen)
 {
+	if (importChosen)
+		*importChosen = false;
+
 	QString name = initial;
 	for (;;) {
-		bool ok = false;
-		name = QInputDialog::getText(main_, title, T("DockDeck.Dialog.NameLabel"), QLineEdit::Normal, name, &ok)
-			       .trimmed();
+		QDialog dialog(main_);
+		dialog.setWindowTitle(title);
+		auto *layout = new QVBoxLayout(&dialog);
+		layout->addWidget(new QLabel(T("DockDeck.Dialog.NameLabel"), &dialog));
+		auto *edit = new QLineEdit(name, &dialog);
+		edit->selectAll();
+		layout->addWidget(edit);
+
+		auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+		bool wantImport = false;
+		if (importChosen) {
+			// Alternative to naming a new deck: bring decks in from a file.
+			QPushButton *import =
+				buttons->addButton(T("DockDeck.Dialog.ImportInstead"), QDialogButtonBox::ActionRole);
+			import->setAutoDefault(false);
+			connect(import, &QPushButton::clicked, &dialog, [&dialog, &wantImport]() {
+				wantImport = true;
+				dialog.reject();
+			});
+		}
+		connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+		connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+		layout->addWidget(buttons);
+		dialog.resize(qMax(dialog.sizeHint().width(), 360), dialog.sizeHint().height());
+
+		const bool ok = dialog.exec() == QDialog::Accepted;
+		if (wantImport) {
+			*importChosen = true;
+			return QString();
+		}
+		name = edit->text().trimmed();
 		if (!ok || name.isEmpty())
 			return QString();
 		if (!store_.nameTaken(name, ignore))
 			return name;
 		QMessageBox::warning(main_, title, T("DockDeck.Dialog.NameTaken"));
 	}
+}
+
+QStringList DockDeck::pickDecksForExport()
+{
+	QDialog dialog(main_);
+	dialog.setWindowTitle(T("DockDeck.Dialog.ExportCollectionTitle"));
+	auto *layout = new QVBoxLayout(&dialog);
+	layout->addWidget(new QLabel(T("DockDeck.Dialog.ExportPick"), &dialog));
+
+	auto *all = new QCheckBox(T("DockDeck.Dialog.SelectAll"), &dialog);
+	all->setTristate(true);
+	layout->addWidget(all);
+
+	auto *list = new QListWidget(&dialog);
+	for (const Deck &deck : store_.decks) {
+		auto *item = new QListWidgetItem(deck.locked ? T("DockDeck.Menu.LockedDeck").arg(deck.name) : deck.name,
+						 list);
+		item->setData(Qt::UserRole, deck.name);
+		item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
+		item->setCheckState(Qt::Checked);
+	}
+	layout->addWidget(list);
+
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
+	QPushButton *exportBtn = buttons->addButton(T("DockDeck.Dialog.ExportButton"), QDialogButtonBox::AcceptRole);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	layout->addWidget(buttons);
+
+	// The master box mirrors the list (checked / unchecked / partial), and
+	// clicking it selects all or none. Export needs at least one deck.
+	bool syncing = false;
+	auto syncMaster = [&]() {
+		int checked = 0;
+		for (int i = 0; i < list->count(); ++i)
+			checked += list->item(i)->checkState() == Qt::Checked ? 1 : 0;
+		syncing = true;
+		all->setCheckState(checked == 0 ? Qt::Unchecked
+						: (checked == list->count() ? Qt::Checked : Qt::PartiallyChecked));
+		syncing = false;
+		exportBtn->setEnabled(checked > 0);
+	};
+	connect(list, &QListWidget::itemChanged, &dialog, [&]() {
+		if (!syncing)
+			syncMaster();
+	});
+	connect(all, &QCheckBox::clicked, &dialog, [&]() {
+		// Qt cycles unchecked -> partial -> checked -> unchecked on click:
+		// so from none or some, a click selects all; from all, none.
+		const bool selectAll = all->checkState() != Qt::Unchecked;
+		syncing = true;
+		for (int i = 0; i < list->count(); ++i)
+			list->item(i)->setCheckState(selectAll ? Qt::Checked : Qt::Unchecked);
+		syncing = false;
+		syncMaster();
+	});
+	syncMaster();
+
+	if (dialog.exec() != QDialog::Accepted)
+		return {};
+	QStringList names;
+	for (int i = 0; i < list->count(); ++i) {
+		if (list->item(i)->checkState() == Qt::Checked)
+			names.append(list->item(i)->data(Qt::UserRole).toString());
+	}
+	return names;
 }
 
 void DockDeck::newDeckFromCurrent()
@@ -739,7 +839,12 @@ void DockDeck::newDeckFromCurrent()
 			break;
 	}
 
-	const QString name = askForName(T("DockDeck.Dialog.NewTitle"), suggestion, QString());
+	bool importInstead = false;
+	const QString name = askForName(T("DockDeck.Dialog.NewTitle"), suggestion, QString(), &importInstead);
+	if (importInstead) {
+		importDecks();
+		return;
+	}
 	if (name.isEmpty())
 		return;
 
@@ -944,18 +1049,19 @@ void DockDeck::exportDecks(const QString &onlyName)
 	if (store_.autoSave)
 		captureActive();
 
+	// A collection: let the user pick which decks go into it.
+	const QStringList names = onlyName.isEmpty() ? pickDecksForExport() : QStringList{onlyName};
 	QVector<Deck> decks;
-	if (onlyName.isEmpty()) {
-		decks = store_.decks;
-	} else if (const Deck *deck = store_.find(onlyName)) {
-		decks.append(*deck);
+	for (const QString &name : names) {
+		if (const Deck *deck = store_.find(name))
+			decks.append(*deck);
 	}
 	if (decks.isEmpty())
 		return;
 
 	// Suggest "<Deck name>.dockdeck.json" (minus characters that are not
-	// allowed in file names), or "Deck Collection.dockdeck.json" for all.
-	QString base = onlyName.isEmpty() ? T("DockDeck.CollectionFileName") : onlyName;
+	// allowed in file names), or "Deck Collection.dockdeck.json" for several.
+	QString base = decks.size() == 1 ? decks.front().name : T("DockDeck.CollectionFileName");
 	base.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
 	const QString fileName = base.trimmed() + QStringLiteral(".dockdeck.json");
 	const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
@@ -1061,9 +1167,12 @@ void DockDeck::importDecks()
 			continue;
 		}
 
+		// Only docks this imported deck actually shows. A deck also lists
+		// docks it keeps hidden (often another deck's missing dock), and
+		// those don't matter here.
 		for (auto it = deck.docks.constBegin(); it != deck.docks.constEnd(); ++it) {
-			if (!localDocks.contains(it.key()))
-				missingDocks.insert(it.key());
+			if (it.value() && !localDocks.contains(it.key()))
+				missingDocks.insert(deck.titles.value(it.key(), it.key()));
 		}
 
 		if (existing && choice == Choice::Replace) {

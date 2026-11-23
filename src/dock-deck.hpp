@@ -99,7 +99,13 @@ private:
 	void setTabStripVisible(bool visible);
 	void setAutoSave(bool enabled);
 
-	QString askForName(const QString &title, const QString &initial, const QString &ignore);
+	// Name prompt. With `importChosen` set, the dialog also offers
+	// "Import Deck or Deck Collection..."; picking it returns an empty name
+	// and sets *importChosen.
+	QString askForName(const QString &title, const QString &initial, const QString &ignore,
+			   bool *importChosen = nullptr);
+	// Checklist of all decks for Export Deck Collection; empty = cancelled.
+	QStringList pickDecksForExport();
 	QString uniqueName(const QString &base) const;
 
 	QMainWindow *main_;

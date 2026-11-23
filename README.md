@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.3.0)
+## Features (v0.3.1)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -43,9 +43,12 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Remember Dock Changes Per Deck** (on by default): when you move docks
   around, the active Deck keeps those changes, like pages. Turn it off if you
   only want Decks to change when you save them explicitly.
-- **Export / import**: *Export Deck...* saves one Deck, *Export Deck Collection...*
-  saves all of them (default file names `<Deck name>.dockdeck.json` and
-  `Deck Collection.dockdeck.json`). *Import Decks...* merges a file into your
+- **Export / import**: *Export Deck...* saves one Deck. *Export Deck Collection...*
+  first lists all Decks with checkboxes (all checked, plus *Select all / none*)
+  so you choose which Decks go into the file; Export is disabled until at least
+  one is checked. Default file names are `<Deck name>.dockdeck.json` and
+  `Deck Collection.dockdeck.json`. The **+** dialog also has
+  *Import Deck or Deck Collection...*, which closes it and starts the import. *Import Decks...* merges a file into your
   Deck Collection. When an imported name already exists you choose **Replace**
   (keeps the tab's place), **Keep Both** (adds "Name (2)"), or **Skip**, with an
   option to do the same for the rest. Damaged entries are ignored and bad files
@@ -67,7 +70,8 @@ Window size and position are not part of a Deck; only the docks are.
 **Sharing Decks between computers:** Decks refer to docks by their internal
 names. Docks from plugins (or browser docks) that don't exist on the importing
 computer can't appear there: they get a placeholder (if that setting is on) and
-the import summary lists them. Install the same plugins / create the same
+the import summary lists them (only docks shown by the Decks that were actually
+added or replaced in that import). Install the same plugins / create the same
 browser docks to get them back.
 
 ### How placeholders work
@@ -158,7 +162,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.3.0)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.3.1)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -175,7 +179,20 @@ Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
 
-## Manual test checklist (0.3.0)
+## Manual test checklist (0.3.1)
+
+Export / import:
+1. Tools → Dock Deck → *Export Deck Collection...*: every Deck is listed and
+   checked. *Select all / none* clears all (Export greys out) and checks all;
+   unchecking one Deck makes it partial. Export two Decks, then import the file:
+   only those two come in.
+2. With a Deck whose dock is missing (placeholder), export a *different* Deck,
+   delete it and import it: the summary must not mention the other Deck's
+   missing dock.
+3. Click **+** → *Import Deck or Deck Collection...*: the name dialog closes and
+   the import file picker opens.
+
+From 0.3.0:
 
 Placeholders keep their size:
 1. Make a Deck that shows a plugin's dock, quit OBS, remove that plugin, start
