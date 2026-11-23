@@ -114,8 +114,8 @@ GitHub Actions builds Ubuntu and Windows (`.github/workflows`).
 ## Roadmap
 
 1. ✅ Empty plugin loads in OBS (Linux + Windows).
-2. 🧪 Save/load dock layouts with `QMainWindow::saveState` / `restoreState`, plus a
-   minimalist tab strip under the menu bar, one tab per layout. *(built, in testing)*
+2. ✅ Save/load dock layouts with `QMainWindow::saveState` / `restoreState`, plus a
+   minimalist tab strip under the menu bar, one tab per layout.
 3. Per-layout hotkeys (Stream Deck) and obs-websocket vendor requests for remote
    switching (bots like Streamer.bot/SAMMI can expose it to chat moderators).
 4. Link layouts to scenes and scene collections for automatic switching.
