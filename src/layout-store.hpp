@@ -40,6 +40,25 @@ struct DockLayout {
 	QHash<QString, bool> docks;
 };
 
+// Export/import of layouts to a standalone JSON file, so they can be shared
+// between machines. Layouts reference docks by their internal names, so docks
+// from plugins missing on the importing machine are simply skipped on apply.
+namespace LayoutFile {
+// Writes {"format": "dock-deck-layouts", "version": 1, "layouts": [...]}.
+bool write(const QString &path, const QVector<DockLayout> &layouts, QString *error);
+
+struct ReadResult {
+	QVector<DockLayout> layouts; // valid entries, in file order
+	int invalidEntries = 0;      // entries that were skipped as malformed
+};
+
+enum class ReadError { None, CannotOpen, TooLarge, NotJson, WrongFormat, TooNew, NoLayouts };
+
+// Validates everything and never crashes on bad input. Anything other than
+// ReadError::None means nothing usable was found.
+ReadError read(const QString &path, ReadResult *result);
+} // namespace LayoutFile
+
 class LayoutStore {
 public:
 	enum class LoadResult { Ok, Missing, Corrupt };

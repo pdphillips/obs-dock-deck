@@ -27,6 +27,131 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // Bump if the file format changes incompatibly.
 static constexpr int kFormatVersion = 1;
 
+// Export files carry this marker so random JSON is rejected early.
+static constexpr const char *kExportFormat = "dock-deck-layouts";
+
+// Hard limits that keep a hostile or broken file from doing anything silly.
+static constexpr qint64 kMaxFileBytes = 16 * 1024 * 1024;
+static constexpr int kMaxNameLength = 100;
+static constexpr int kMaxLayouts = 500;
+
+// QMainWindow::saveState() data starts with a 32-bit 0xff marker.
+static bool looksLikeMainWindowState(const QByteArray &state)
+{
+	return state.size() >= 8 && static_cast<unsigned char>(state[0]) == 0 &&
+	       static_cast<unsigned char>(state[1]) == 0 && static_cast<unsigned char>(state[2]) == 0 &&
+	       static_cast<unsigned char>(state[3]) == 0xff;
+}
+
+static QJsonObject layoutToJson(const DockLayout &layout)
+{
+	QJsonObject docks;
+	for (auto it = layout.docks.constBegin(); it != layout.docks.constEnd(); ++it)
+		docks.insert(it.key(), it.value());
+
+	QJsonObject o;
+	o.insert(QStringLiteral("name"), layout.name);
+	o.insert(QStringLiteral("state"), QString::fromLatin1(layout.state.toBase64()));
+	o.insert(QStringLiteral("docks"), docks);
+	return o;
+}
+
+// Strict parse of one layout entry; returns false if anything is off.
+static bool layoutFromJson(const QJsonValue &value, DockLayout *out)
+{
+	if (!value.isObject())
+		return false;
+	const QJsonObject o = value.toObject();
+
+	const QJsonValue name = o.value(QStringLiteral("name"));
+	const QJsonValue state = o.value(QStringLiteral("state"));
+	const QJsonValue docks = o.value(QStringLiteral("docks"));
+	if (!name.isString() || !state.isString() || !(docks.isObject() || docks.isUndefined()))
+		return false;
+
+	DockLayout layout;
+	layout.name = name.toString().simplified();
+	if (layout.name.isEmpty() || layout.name.size() > kMaxNameLength)
+		return false;
+
+	const auto decoded =
+		QByteArray::fromBase64Encoding(state.toString().toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
+	if (!decoded || !looksLikeMainWindowState(*decoded))
+		return false;
+	layout.state = *decoded;
+
+	const QJsonObject dockMap = docks.toObject();
+	for (auto it = dockMap.begin(); it != dockMap.end(); ++it) {
+		if (it.key().isEmpty() || !it.value().isBool())
+			return false;
+		layout.docks.insert(it.key(), it.value().toBool());
+	}
+
+	*out = layout;
+	return true;
+}
+
+bool LayoutFile::write(const QString &path, const QVector<DockLayout> &layouts, QString *error)
+{
+	QJsonArray arr;
+	for (const DockLayout &layout : layouts)
+		arr.append(layoutToJson(layout));
+
+	QJsonObject root;
+	root.insert(QStringLiteral("format"), QString::fromLatin1(kExportFormat));
+	root.insert(QStringLiteral("version"), kFormatVersion);
+	root.insert(QStringLiteral("layouts"), arr);
+
+	QSaveFile file(path);
+	if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 ||
+	    !file.commit()) {
+		if (error)
+			*error = file.errorString();
+		return false;
+	}
+	return true;
+}
+
+LayoutFile::ReadError LayoutFile::read(const QString &path, ReadResult *result)
+{
+	QFile file(path);
+	if (!file.open(QIODevice::ReadOnly))
+		return ReadError::CannotOpen;
+	if (file.size() > kMaxFileBytes)
+		return ReadError::TooLarge;
+
+	QJsonParseError err{};
+	const QJsonDocument doc = QJsonDocument::fromJson(file.read(kMaxFileBytes), &err);
+	if (err.error != QJsonParseError::NoError || !doc.isObject())
+		return ReadError::NotJson;
+
+	// Accept export files and also Dock Deck's own layouts.json (no marker).
+	const QJsonObject root = doc.object();
+	const QJsonValue format = root.value(QStringLiteral("format"));
+	if (!format.isUndefined() && format.toString() != QString::fromLatin1(kExportFormat))
+		return ReadError::WrongFormat;
+	if (root.value(QStringLiteral("version")).toInt(kFormatVersion) > kFormatVersion)
+		return ReadError::TooNew;
+
+	const QJsonValue layouts = root.value(QStringLiteral("layouts"));
+	if (!layouts.isArray())
+		return ReadError::NoLayouts;
+
+	ReadResult out;
+	for (const QJsonValue &value : layouts.toArray()) {
+		DockLayout layout;
+		if (out.layouts.size() < kMaxLayouts && layoutFromJson(value, &layout))
+			out.layouts.append(layout);
+		else
+			++out.invalidEntries;
+	}
+
+	if (out.layouts.isEmpty())
+		return ReadError::NoLayouts;
+	*result = out;
+	return ReadError::None;
+}
+
 LayoutStore::LoadResult LayoutStore::load(const QString &path)
 {
 	QFile file(path);
@@ -77,17 +202,8 @@ LayoutStore::LoadResult LayoutStore::load(const QString &path)
 bool LayoutStore::save(const QString &path) const
 {
 	QJsonArray arr;
-	for (const DockLayout &layout : layouts) {
-		QJsonObject docks;
-		for (auto it = layout.docks.constBegin(); it != layout.docks.constEnd(); ++it)
-			docks.insert(it.key(), it.value());
-
-		QJsonObject o;
-		o.insert(QStringLiteral("name"), layout.name);
-		o.insert(QStringLiteral("state"), QString::fromLatin1(layout.state.toBase64()));
-		o.insert(QStringLiteral("docks"), docks);
-		arr.append(o);
-	}
+	for (const DockLayout &layout : layouts)
+		arr.append(layoutToJson(layout));
 
 	QJsonObject root;
 	root.insert(QStringLiteral("version"), kFormatVersion);
