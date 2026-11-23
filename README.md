@@ -8,7 +8,7 @@ slim tab strip under the menu bar. Windows and Linux. GPL-2.0-or-later.
 Scaffolded from [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate)
 with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABLE_QT`) is on.
 
-## Features (v0.2.0)
+## Features (v0.2.1)
 
 - **Layouts**: a layout is a named snapshot of OBS's docks: where every dock
   sits (`QMainWindow::saveState()`), plus which docks are shown or hidden.
@@ -21,11 +21,23 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Remember Dock Changes Per Layout** (on by default): when you move docks
   around, the active layout keeps those changes, like pages. Turn it off if you
   only want layouts to change when you save them explicitly.
+- **Export / import**: **Tools → Dock Deck → Export Layouts...** saves all
+  layouts to a `.json` file; right-click a tab → **Export This Layout...** saves
+  just that one. **Import Layouts...** merges a file into your tabs. When an
+  imported name already exists you choose **Replace** (keeps the tab's place),
+  **Keep Both** (adds "Name (2)"), or **Skip**, with an option to do the same
+  for the rest. Damaged entries are ignored and bad files are rejected with a
+  message; nothing is changed until a file has been read successfully.
 - **Safe restore**: the active layout is re-applied after OBS finishes loading
   (so docks added by other plugins exist). A missing dock is skipped, and a dock
   that is newer than a layout is left as it is.
 
 Window size and position are not part of a layout; only the docks are.
+
+**Sharing layouts between computers:** layouts refer to docks by their internal
+names. Docks from plugins (or browser docks) that don't exist on the importing
+computer are skipped when the layout is used, and the import summary lists them.
+Install the same plugins / create the same browser docks to get them back.
 The placeholder **Docks → Dock Deck** panel from 0.1.0 is gone; the tab strip
 and the Tools menu replace it.
 
@@ -35,6 +47,11 @@ One global file (not per profile or scene collection yet):
 
 - Linux: `~/.config/obs-studio/plugin_config/obs-dock-deck/layouts.json`
 - Windows: `%APPDATA%\obs-studio\plugin_config\obs-dock-deck\layouts.json`
+
+Export files use the same entries wrapped as
+`{"format": "dock-deck-layouts", "version": 1, "layouts": [{"name", "state", "docks"}]}`,
+where `state` is base64 `QMainWindow::saveState()` data and `docks` maps each
+dock name to shown/hidden. Import also accepts a copied `layouts.json`.
 
 If the file is ever unreadable it is kept as `layouts.json.bad`, and Dock Deck
 starts fresh with a single **Main** layout.
@@ -46,7 +63,9 @@ starts fresh with a single **Main** layout.
    it (for example "Gaming"). That arrangement is now its own tab.
 3. Click tabs to switch. With *Remember Dock Changes Per Layout* on, changes you
    make on a tab stay with that tab.
-4. To hide the strip, right-click it → *Hide Tab Strip*. Bring it back with
+4. To move layouts to another computer, use **Tools → Dock Deck → Export
+   Layouts...** there and **Import Layouts...** here.
+5. To hide the strip, right-click it → *Hide Tab Strip*. Bring it back with
    **Tools → Dock Deck → Show Tab Strip**.
 
 ## For developers
@@ -61,7 +80,7 @@ obs-websocket, scene links) and the optional fade will call or hook into it.
 | `src/plugin-main.cpp` | Module entry points and OBS frontend events |
 | `src/dock-deck.*` | Layout switching, startup restore, menus, dialogs |
 | `src/tab-strip.*` | The tab strip toolbar (view only; emits signals) |
-| `src/layout-store.*` | Layout data model and JSON load/save |
+| `src/layout-store.*` | Layout data model, config load/save, export/import file format |
 
 ## Build on Linux (against the system OBS)
 
@@ -90,7 +109,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.2.0)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.2.1)`,
 and the Dock Deck tab strip should appear under the menu bar.
 
 ## Build on Windows
