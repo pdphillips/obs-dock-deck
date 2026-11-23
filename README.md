@@ -54,7 +54,7 @@ cmake --build --preset windows-x64 --config RelWithDebInfo
 ```
 
 Copy the built `obs-dock-deck.dll` to
-`C:\ProgramData\obs-studio\plugins\obs-dock-deck\bin\64bit\` and `data\` to
+`C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
 
 ## CI
