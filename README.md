@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.3.1)
+## Features (v0.3.2)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -35,7 +35,8 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
   closed, and dock changes are not auto-saved into it, so it always comes back
   exactly as you locked it. This works like OBS's own **Docks → Lock Docks**
   (which removes the move/float/close buttons), and additionally blocks
-  dragging the splitters between docks. OBS's Lock Docks still works and counts
+  dragging the splitters between docks (the mouse keeps its normal arrow over
+  them while locked). OBS's Lock Docks still works and counts
   as a lock for every Deck: a Deck is locked if either is on. Locked Decks show
   *(Locked)* in **Tools → Dock Deck**, and *Save Current Docks Into This Deck*
   is disabled for them (unlock first). Docks can still be shown/hidden from
@@ -162,7 +163,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.3.1)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.3.2)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -179,7 +180,17 @@ Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
 
-## Manual test checklist (0.3.1)
+## Manual test checklist (0.3.2)
+
+Locked splitters:
+1. Lock a Deck (padlock) and hover the gap between two docks: the cursor stays
+   the normal arrow, and stays normal after moving away.
+2. Same with OBS's **Docks → Lock Docks** instead of a Deck lock.
+3. Hover a gap while unlocked (resize cursor), then lock from the tab's
+   padlock: the cursor goes back to normal. Unlock: gaps show the resize cursor
+   and resize again.
+
+From 0.3.1:
 
 Export / import:
 1. Tools → Dock Deck → *Export Deck Collection...*: every Deck is listed and

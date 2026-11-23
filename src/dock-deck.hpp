@@ -81,6 +81,7 @@ private:
 	void applyLock(const Deck *deck);
 	void updateLock();
 	bool obsDocksLocked() const;
+	void resetSeparatorCursor();
 	void toggleLock(const QString &name);
 	void setAllLocked(bool locked);
 	void saveConfig();

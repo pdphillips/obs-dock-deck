@@ -583,8 +583,10 @@ bool DockDeck::eventFilter(QObject *watched, QEvent *event)
 	}
 
 	// Locked: no resizing. The separators between docks are not widgets;
-	// QMainWindow itself handles presses (and the resize cursor on hover)
-	// on the gaps between its children, so swallow those events there.
+	// QMainWindow itself handles them: a press on a gap starts a resize, and
+	// HoverMove *and* MouseMove switch to the resize cursor. Swallow all of
+	// those, and if a resize cursor is up anyway (e.g. it was set just before
+	// locking), let Qt put the normal cursor back.
 	if (watched == main_ && locked_) {
 		switch (event->type()) {
 		case QEvent::MouseButtonPress:
@@ -596,6 +598,8 @@ bool DockDeck::eventFilter(QObject *watched, QEvent *event)
 		}
 		case QEvent::HoverEnter:
 		case QEvent::HoverMove:
+		case QEvent::MouseMove:
+			resetSeparatorCursor();
 			return true;
 		default:
 			break;
@@ -988,8 +992,29 @@ void DockDeck::applyLock(const Deck *deck)
 			dock->setProperty(kSavedFeaturesProperty, QVariant());
 		}
 	}
-	if (!locked_)
-		main_->unsetCursor(); // in case a resize cursor was left behind
+	resetSeparatorCursor(); // never leave a resize cursor behind on (un)lock
+}
+
+// QMainWindow sets a resize cursor on itself while the mouse is over a
+// separator and only takes it back on hover/leave events. A plain
+// unsetCursor() isn't enough (its CursorChange handler re-applies the resize
+// cursor), so hand it the HoverLeave it uses to restore the normal cursor.
+void DockDeck::resetSeparatorCursor()
+{
+	if (!main_->testAttribute(Qt::WA_SetCursor))
+		return;
+	switch (main_->cursor().shape()) {
+	case Qt::SplitHCursor:
+	case Qt::SplitVCursor:
+	case Qt::SizeHorCursor:
+	case Qt::SizeVerCursor: {
+		QHoverEvent leave(QEvent::HoverLeave, QPointF(), QPointF(), QPointF());
+		QCoreApplication::sendEvent(main_, &leave);
+		break;
+	}
+	default:
+		break;
+	}
 }
 
 void DockDeck::toggleLock(const QString &name)
