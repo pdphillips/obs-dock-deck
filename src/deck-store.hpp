@@ -31,6 +31,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 // One named dock arrangement.
 struct Deck {
+	// Stable identity (a UUID) that survives renames. Hotkey bindings and
+	// remote commands use it. Decks saved before 0.4.0 get one on load.
+	QString id;
 	QString name;
 
 	// Raw bytes from QMainWindow::saveState(). Stored base64 in the JSON file.
@@ -91,6 +94,15 @@ public:
 	bool nameTaken(const QString &name, const QString &ignore = QString()) const;
 
 	QStringList names() const;
+
+	Deck *findById(const QString &id);
+	bool idTaken(const QString &id) const;
+
+	// Gives every deck without an id (or with a duplicate one) a fresh
+	// UUID. Returns true if anything changed.
+	bool ensureIds();
+
+	static QString newId();
 
 	QVector<Deck> decks;
 	QString active;               // name of the active deck ("" if none)

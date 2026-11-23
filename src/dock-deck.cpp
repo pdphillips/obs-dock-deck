@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "dock-deck.hpp"
 #include "deck-strip.hpp"
+#include "deck-websocket.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -69,7 +70,7 @@ static const char *sourceName(SwitchSource source)
 {
 	switch (source) {
 	case SwitchSource::Tab:
-		return "deck-tab";
+		return "tab";
 	case SwitchSource::Menu:
 		return "menu";
 	case SwitchSource::Startup:
@@ -95,6 +96,9 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 	char *path = obs_module_config_path("layouts.json");
 	configPath_ = QString::fromUtf8(path ? path : "");
 	bfree(path);
+	char *hkPath = obs_module_config_path("hotkeys.json");
+	hotkeyPath_ = QString::fromUtf8(hkPath ? hkPath : "");
+	bfree(hkPath);
 
 	if (!configPath_.isEmpty()) {
 		QDir().mkpath(QFileInfo(configPath_).absolutePath());
@@ -167,6 +171,40 @@ DockDeck::~DockDeck()
 // The central switch
 // ---------------------------------------------------------------------------
 
+bool DockDeck::switchToDeckId(const QString &id, SwitchSource source)
+{
+	const Deck *deck = store_.findById(id);
+	return deck ? switchToDeck(deck->name, source) : false;
+}
+
+bool DockDeck::stepDeck(int delta, SwitchSource source)
+{
+	const qsizetype count = store_.decks.size();
+	if (!ready_ || count == 0)
+		return false;
+	const qsizetype current = store_.indexOf(store_.active);
+	const qsizetype next = ((current < 0 ? 0 : current) + delta % count + count) % count;
+	return switchToDeck(store_.decks[next].name, source);
+}
+
+DockDeck::Snapshot DockDeck::snapshot() const
+{
+	QMutexLocker lock(&snapshotMutex_);
+	return snapshot_;
+}
+
+void DockDeck::publishSnapshot()
+{
+	Snapshot snap;
+	snap.ready = ready_;
+	for (const Deck &deck : store_.decks)
+		snap.decks.append({deck.id, deck.name, deck.locked});
+	if (const Deck *active = store_.find(store_.active))
+		snap.activeId = active->id;
+	QMutexLocker lock(&snapshotMutex_);
+	snapshot_ = snap;
+}
+
 bool DockDeck::switchToDeck(const QString &name, SwitchSource source)
 {
 	// Hotkeys and websocket requests arrive on OBS worker threads; widgets may
@@ -214,6 +252,8 @@ bool DockDeck::switchToDeck(const QString &name, SwitchSource source)
 	obs_log(LOG_INFO, "switched to deck '%s' (%s)", name.toUtf8().constData(), sourceName(source));
 	saveConfig();
 	scheduleRefresh();
+	if (const Deck *now = store_.find(name))
+		DeckWebsocket::emitDeckChanged(now->name, now->id, sourceName(source));
 	return true;
 }
 
@@ -521,8 +561,12 @@ void DockDeck::captureActive()
 	if (locked_)
 		return;
 	Deck *active = store_.find(store_.active);
-	if (active)
-		*active = capture(active->name, active);
+	if (active) {
+		Deck fresh = capture(active->name, active);
+		fresh.id = active->id;
+		fresh.locked = active->locked;
+		*active = fresh;
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -549,17 +593,28 @@ void DockDeck::onFinishedLoading()
 		if (strip_)
 			strip_->setVisible(store_.showTabStrip);
 		updateLock(); // also covers the first run, where nothing was applied
-		saveConfig();
+		loadHotkeyBindings();
+		saveConfig(); // also registers the hotkeys
 		refreshUi();
 	});
 }
 
 void DockDeck::onExit()
 {
+	// Remote requests stop first: they must not queue work during teardown.
+	DeckWebsocket::shutdown();
+
 	// Dock state was already captured on the Close event; just write it out.
 	if (ready_)
 		saveConfig();
 	ready_ = false; // ignore anything that arrives during teardown
+	publishSnapshot();
+
+	// libobs is still alive here; unregister so no hotkey can reach us later.
+	saveHotkeyBindings();
+	unregisterHotkeys();
+	obs_data_release(hotkeyData_);
+	hotkeyData_ = nullptr;
 }
 
 bool DockDeck::eventFilter(QObject *watched, QEvent *event)
@@ -610,6 +665,10 @@ bool DockDeck::eventFilter(QObject *watched, QEvent *event)
 
 void DockDeck::saveConfig()
 {
+	store_.ensureIds();
+	if (ready_)
+		syncHotkeys(); // names/ids may have changed
+	publishSnapshot();
 	if (configPath_.isEmpty())
 		return;
 	if (!store_.save(configPath_))
@@ -875,7 +934,10 @@ void DockDeck::overwriteDeck(const QString &name)
 		    QMessageBox::Yes)
 		return;
 
-	*deck = capture(name, deck);
+	Deck fresh = capture(name, deck);
+	fresh.id = deck->id;
+	fresh.locked = deck->locked;
+	*deck = fresh;
 	obs_log(LOG_INFO, "saved current docks into deck '%s'", name.toUtf8().constData());
 	saveConfig();
 }
@@ -1019,23 +1081,32 @@ void DockDeck::resetSeparatorCursor()
 
 void DockDeck::toggleLock(const QString &name)
 {
+	if (const Deck *deck = store_.find(name))
+		setDeckLocked(name, !deck->locked);
+}
+
+bool DockDeck::setDeckLocked(const QString &name, bool locked)
+{
 	Deck *deck = store_.find(name);
 	if (!deck)
-		return;
+		return false;
+	if (deck->locked == locked)
+		return true;
 
 	// Locking the deck on screen: keep what is on screen right now first.
-	if (!deck->locked && name == store_.active && ready_ && store_.autoSave)
+	if (locked && name == store_.active && ready_ && store_.autoSave)
 		captureActive();
 	deck = store_.find(name);
 	if (!deck)
-		return;
+		return false;
 
-	deck->locked = !deck->locked;
+	deck->locked = locked;
 	obs_log(LOG_INFO, "%s deck '%s'", deck->locked ? "locked" : "unlocked", name.toUtf8().constData());
 	if (ready_)
 		updateLock();
 	saveConfig();
 	scheduleRefresh();
+	return true;
 }
 
 void DockDeck::setAllLocked(bool locked)
@@ -1203,15 +1274,21 @@ void DockDeck::importDecks()
 		if (existing && choice == Choice::Replace) {
 			// Keep the existing tab's name and position; take the docks.
 			const QString keepName = existing->name;
+			const QString keepId = existing->id; // keeps its hotkey binding
 			*existing = deck;
 			existing->name = keepName;
+			existing->id = keepId;
 			if (keepName == store_.active)
 				reapplyActive = true;
 			++replaced;
 		} else {
 			if (existing)
 				deck.name = uniqueName(deck.name);
+			// Same id as a deck here (e.g. re-importing a copy): new id.
+			if (store_.idTaken(deck.id))
+				deck.id.clear();
 			store_.decks.append(deck);
+			store_.ensureIds();
 			++added;
 		}
 	}

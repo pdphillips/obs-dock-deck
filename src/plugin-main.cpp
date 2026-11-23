@@ -18,6 +18,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 // Module entry points. All real work lives in DockDeck (dock-deck.cpp).
 
+#include "deck-websocket.hpp"
 #include "dock-deck.hpp"
 
 #include <obs-frontend-api.h>
@@ -74,6 +75,14 @@ bool obs_module_load(void)
 
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 	return true;
+}
+
+// obs-websocket registers its API during its own load, so vendors must be
+// registered here, after every module has loaded.
+void obs_module_post_load(void)
+{
+	if (g_deck)
+		DeckWebsocket::registerVendor(g_deck);
 }
 
 void obs_module_unload(void)

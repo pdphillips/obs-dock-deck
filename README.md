@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.3.2)
+## Features (v0.4.0)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -62,6 +62,10 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
   it or close the panel. When the real dock appears, it moves into that spot and
   the placeholder disappears. Switching to a Deck that doesn't use the dock
   removes the placeholder.
+- **Hotkeys** for every Deck, Next / Previous Deck and Toggle Lock (see
+  [Hotkeys](#hotkeys)).
+- **Remote control** through obs-websocket for Streamer.bot, SAMMI, Touch
+  Portal and scripts (see [Remote control](#remote-control-obs-websocket)).
 - **Safe restore**: the active Deck is re-applied after OBS finishes loading
   (so docks added by other plugins exist). A missing dock never causes an error,
   and a dock that is newer than a Deck is left as it is.
@@ -100,12 +104,106 @@ unchanged. Export files wrap the same entries as
 where `state` is base64 `QMainWindow::saveState()` data, `docks` maps each
 dock name to shown/hidden, and `titles` (optional, new in 0.2.2) maps each dock
 name to its title, and `locked` (optional, new in 0.3.0, written only when
-`true`) marks a locked Deck. Import also accepts a copied `layouts.json` and
+`true`) marks a locked Deck, and `id` (new in 0.4.0) is the Deck's permanent
+id. Decks without an id get one when loaded. Import also accepts a copied `layouts.json` and
 files from 0.2.x (no titles / no lock: imported unlocked); older versions read
 0.3.0 files too and simply ignore the lock.
 
 If the file is ever unreadable it is kept as `layouts.json.bad`, and Dock Deck
 starts fresh with a single **Main** Deck.
+
+## Hotkeys
+
+**Settings → Hotkeys** lists, for every Deck, **Dock Deck: Switch to <Deck>**,
+plus **Dock Deck: Next Deck**, **Dock Deck: Previous Deck** (both wrap around)
+and **Dock Deck: Toggle Lock on Current Deck**. Stream Deck and similar tools can
+press these hotkeys.
+
+Each Deck has a permanent internal id, so renaming a Deck keeps its hotkey.
+Bindings are saved in `hotkeys.json` next to `layouts.json`. A deleted Deck's
+binding is kept there too, so importing that Deck again (from an export made on
+this computer) brings its hotkey back.
+
+## Remote control (obs-websocket)
+
+If obs-websocket is available (built into OBS 28+; **Tools → WebSocket Server
+Settings**), Dock Deck registers the vendor **`dock-deck`**. Without
+obs-websocket nothing happens, and nothing breaks.
+
+Send requests with obs-websocket's `CallVendorRequest`. Each answer has
+`"ok": true`, or `"ok": false` plus an `"error"` text.
+
+| Request | Request data | Answer |
+| --- | --- | --- |
+| `GetDecks` | none | `decks: [{name, id, locked, active}]`, `activeName`, `activeId` |
+| `GetCurrentDeck` | none | `name`, `id`, `locked` |
+| `SetCurrentDeck` | `{"name": "Gaming"}` or `{"id": "..."}` | the Deck switched to |
+| `NextDeck` / `PreviousDeck` | none | the Deck switched to (wraps around) |
+| `SetDeckLocked` | `{"name": "Gaming", "locked": true}` (or `"id"`) | `name`, `id`, `locked` |
+
+Names match exactly first, then ignoring upper/lower case. `id` is better for
+bots because it doesn't change when a Deck is renamed (get it from `GetDecks`).
+
+Event **`DeckChanged`** (obs-websocket `VendorEvent`, in the default
+"all events" subscription) is sent on every switch:
+`{"name": "Gaming", "id": "...", "source": "tab" | "menu" | "hotkey" | "websocket" | "import"}`.
+
+**Streamer.bot / SAMMI / other tools**: use the tool's raw/custom OBS request
+action with request type `CallVendorRequest` and this data:
+
+```json
+{
+  "vendorName": "dock-deck",
+  "requestType": "SetCurrentDeck",
+  "requestData": { "name": "Gaming" }
+}
+```
+
+```json
+{ "vendorName": "dock-deck", "requestType": "NextDeck", "requestData": {} }
+```
+
+```json
+{
+  "vendorName": "dock-deck",
+  "requestType": "SetDeckLocked",
+  "requestData": { "name": "Gaming", "locked": true }
+}
+```
+
+The full obs-websocket v5 message (for your own clients) looks like this:
+
+```json
+{
+  "op": 6,
+  "d": {
+    "requestType": "CallVendorRequest",
+    "requestId": "1",
+    "requestData": {
+      "vendorName": "dock-deck",
+      "requestType": "GetDecks",
+      "requestData": {}
+    }
+  }
+}
+```
+
+### Try it from a terminal
+
+`tools/dockdeck-remote.py` is a small test client (Python 3 + `obsws-python`).
+Use the port and password from **Tools → WebSocket Server Settings**:
+
+```bash
+pip install obsws-python
+python tools/dockdeck-remote.py --password YOUR_PASSWORD list
+python tools/dockdeck-remote.py --password YOUR_PASSWORD switch "Main"
+python tools/dockdeck-remote.py --password YOUR_PASSWORD next
+python tools/dockdeck-remote.py --password YOUR_PASSWORD lock "Main"
+python tools/dockdeck-remote.py --password YOUR_PASSWORD watch
+```
+
+`watch` prints a `DeckChanged` line for every switch (click tabs, use hotkeys)
+until you press Ctrl+C.
 
 ## Usage
 
@@ -126,8 +224,9 @@ starts fresh with a single **Main** Deck.
 
 Every Deck switch goes through one function,
 `DockDeck::switchToDeck(name, source)` in `src/dock-deck.cpp`. It is safe to
-call from any thread and before OBS finishes loading. Future triggers (hotkeys,
-obs-websocket, scene links) and the optional fade will call or hook into it.
+call from any thread and before OBS finishes loading. Hotkeys and obs-websocket
+requests use it (`SwitchSource::Hotkey` / `Websocket`); scene links and the
+optional fade will too.
 
 | File | What it does |
 | --- | --- |
@@ -135,6 +234,10 @@ obs-websocket, scene links) and the optional fade will call or hook into it.
 | `src/dock-deck.*` | Deck switching, startup restore, placeholders, menus, dialogs |
 | `src/deck-strip.*` | The Deck tabs toolbar (view only; emits signals) |
 | `src/deck-store.*` | Deck data model, config load/save, export/import file format |
+| `src/deck-hotkeys.cpp` | Frontend hotkeys and their saved bindings (`hotkeys.json`) |
+| `src/deck-websocket.*` | obs-websocket vendor `dock-deck` (requests + `DeckChanged` event) |
+| `src/obs-websocket-api.h` | obs-websocket's header-only plugin API (GPL-2.0+, unmodified apart from formatting) |
+| `tools/dockdeck-remote.py` | Command-line test client for the vendor requests |
 
 ## Build on Linux (against the system OBS)
 
@@ -163,7 +266,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.3.2)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.4.0)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -180,7 +283,25 @@ Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
 
-## Manual test checklist (0.3.2)
+## Manual test checklist (0.4.0)
+
+Hotkeys:
+1. **Settings → Hotkeys**: find *Dock Deck: Switch to <Deck>* for every Deck plus
+   *Next Deck*, *Previous Deck*, *Toggle Lock on Current Deck*. Bind keys; each
+   works (Next/Previous wrap around; Toggle Lock flips the padlock).
+2. Rename a Deck: its hotkey entry shows the new name and keeps its key.
+3. Add a Deck with **+**: a new *Switch to* entry appears. Delete one: it goes.
+4. Restart OBS: all bindings are still there.
+
+obs-websocket (enable it in **Tools → WebSocket Server Settings**):
+1. `python tools/dockdeck-remote.py --password ... list` shows every Deck,
+   its id, lock and which is active.
+2. `switch "<Deck>"`, `next`, `prev`, `lock "<Deck>"`, `unlock "<Deck>"` do what
+   they say in OBS. A wrong name answers `"ok": false` with an error.
+3. Run `watch` in a second terminal and click tabs / use hotkeys: one
+   `DeckChanged` line per switch with `source` tab / hotkey / websocket.
+
+From 0.3.2:
 
 Locked splitters:
 1. Lock a Deck (padlock) and hover the gap between two docks: the cursor stays
@@ -239,7 +360,7 @@ GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every pu
 2. ✅ Save/load dock arrangements with `QMainWindow::saveState` / `restoreState`,
    plus minimalist tabs under the menu bar, one tab per Deck (since then:
    export/import, placeholders for missing docks, Deck locking).
-3. Per-Deck hotkeys (Stream Deck) and obs-websocket vendor requests for remote
+3. ✅ Per-Deck hotkeys (Stream Deck) and obs-websocket vendor requests for remote
    switching (bots like Streamer.bot/SAMMI can expose it to chat moderators).
 4. Link Decks to scenes and scene collections for automatic switching.
 5. Deck packs: export/import a Deck together with selected scenes, sources and

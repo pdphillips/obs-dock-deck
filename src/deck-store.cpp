@@ -23,6 +23,8 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSaveFile>
+#include <QSet>
+#include <QUuid>
 
 // Bump if the file format changes incompatibly.
 static constexpr int kFormatVersion = 1;
@@ -51,6 +53,8 @@ static QJsonObject deckToJson(const Deck &deck)
 		docks.insert(it.key(), it.value());
 
 	QJsonObject o;
+	if (!deck.id.isEmpty())
+		o.insert(QStringLiteral("id"), deck.id);
 	o.insert(QStringLiteral("name"), deck.name);
 	o.insert(QStringLiteral("state"), QString::fromLatin1(deck.state.toBase64()));
 	o.insert(QStringLiteral("docks"), docks);
@@ -98,6 +102,10 @@ static bool deckFromJson(const QJsonValue &value, Deck *out)
 	deck.name = name.toString().simplified();
 	if (deck.name.isEmpty() || deck.name.size() > kMaxNameLength)
 		return false;
+	// Optional; a bad id is dropped (a new one is assigned on import).
+	const QString id = o.value(QStringLiteral("id")).toString().trimmed();
+	if (id.size() <= 64)
+		deck.id = id;
 
 	const auto decoded =
 		QByteArray::fromBase64Encoding(state.toString().toLatin1(), QByteArray::AbortOnBase64DecodingErrors);
@@ -223,10 +231,53 @@ DeckStore::LoadResult DeckStore::load(const QString &path)
 			deck.docks.insert(it.key(), it.value().toBool());
 		deck.titles = titlesFromJson(o.value(QStringLiteral("titles")));
 		deck.locked = o.value(QStringLiteral("locked")).toBool(false);
+		const QString id = o.value(QStringLiteral("id")).toString().trimmed();
+		if (id.size() <= 64)
+			deck.id = id;
 
 		decks.append(deck);
 	}
+	ensureIds();
 	return LoadResult::Ok;
+}
+
+QString DeckStore::newId()
+{
+	return QUuid::createUuid().toString(QUuid::WithoutBraces);
+}
+
+Deck *DeckStore::findById(const QString &id)
+{
+	if (id.isEmpty())
+		return nullptr;
+	for (Deck &deck : decks) {
+		if (deck.id == id)
+			return &deck;
+	}
+	return nullptr;
+}
+
+bool DeckStore::idTaken(const QString &id) const
+{
+	for (const Deck &deck : decks) {
+		if (deck.id == id)
+			return true;
+	}
+	return false;
+}
+
+bool DeckStore::ensureIds()
+{
+	bool changed = false;
+	QSet<QString> seen;
+	for (Deck &deck : decks) {
+		if (deck.id.isEmpty() || seen.contains(deck.id)) {
+			deck.id = newId();
+			changed = true;
+		}
+		seen.insert(deck.id);
+	}
+	return changed;
 }
 
 bool DeckStore::save(const QString &path) const

@@ -44,6 +44,10 @@ target_sources(
     src/deck-store.hpp
     src/deck-strip.cpp
     src/deck-strip.hpp
+    src/deck-hotkeys.cpp
+    src/deck-websocket.cpp
+    src/deck-websocket.hpp
+    src/obs-websocket-api.h
 )
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

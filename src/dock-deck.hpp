@@ -24,6 +24,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "deck-store.hpp"
 
 #include <QHash>
+#include <QMutex>
+#include <QVector>
+#include <obs.h>
 #include <QObject>
 #include <QPointer>
 #include <QString>
@@ -52,9 +55,35 @@ public:
 	// Returns false if the deck doesn't exist.
 	bool switchToDeck(const QString &name, SwitchSource source);
 
+	// Like switchToDeck(), by stable deck id. UI thread only.
+	bool switchToDeckId(const QString &id, SwitchSource source);
+	// Next (+1) / previous (-1) deck in tab order, wrapping around.
+	bool stepDeck(int delta, SwitchSource source);
+	// Lock or unlock a deck by name. UI thread only.
+	bool setDeckLocked(const QString &name, bool locked);
+
+	// Thread-safe copy of the deck list for remote requests, which arrive on
+	// obs-websocket's thread and must never wait for the UI thread.
+	struct DeckInfo {
+		QString id;
+		QString name;
+		bool locked = false;
+	};
+	struct Snapshot {
+		bool ready = false;
+		QVector<DeckInfo> decks; // tab order
+		QString activeId;
+	};
+	Snapshot snapshot() const;
+
 	// Called from the OBS frontend event callback.
 	void onFinishedLoading();
 	void onExit();
+
+	// Hotkey plumbing called from libobs callbacks (UI thread, queued).
+	void onHotkey(obs_hotkey_id id);
+	void scheduleHotkeySave();
+	void saveHotkeyBindings();
 
 protected:
 	bool eventFilter(QObject *watched, QEvent *event) override;
@@ -85,6 +114,14 @@ private:
 	void toggleLock(const QString &name);
 	void setAllLocked(bool locked);
 	void saveConfig();
+	void publishSnapshot();
+
+	// Hotkeys (deck-hotkeys.cpp): one "Switch to <deck>" per deck plus
+	// Next / Previous / Toggle Lock. Bindings are stored per deck id.
+	void loadHotkeyBindings();
+	void syncHotkeys();
+	void unregisterHotkeys();
+	obs_hotkey_id registerHotkey(const QString &key, const QString &description);
 	void scheduleRefresh();
 	void refreshUi();
 	void rebuildToolsMenu();
@@ -123,6 +160,18 @@ private:
 	bool lockQueued_ = false;
 	bool locked_ = false;             // active deck locked, or OBS's Lock Docks is on
 	QPointer<QAction> obsLockAction_; // OBS's Docks > Lock Docks
+
+	// Hotkeys: deck id -> hotkey, plus the three global ones.
+	QHash<QString, obs_hotkey_id> deckHotkeys_;
+	obs_hotkey_id nextHotkey_ = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id prevHotkey_ = OBS_INVALID_HOTKEY_ID;
+	obs_hotkey_id lockHotkey_ = OBS_INVALID_HOTKEY_ID;
+	obs_data_t *hotkeyData_ = nullptr; // saved bindings, keyed by hotkey name
+	QString hotkeyPath_;
+	bool hotkeySaveQueued_ = false;
+
+	mutable QMutex snapshotMutex_;
+	Snapshot snapshot_;
 
 	// objectName -> placeholder dock currently standing in for it.
 	QHash<QString, QPointer<QDockWidget>> placeholders_;
