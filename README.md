@@ -68,8 +68,8 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
   switches OBS to that scene (see [Linked scenes](#linked-scenes)).
 - **Hotkeys** for every Deck, Next / Previous Deck and Toggle Lock (see
   [Hotkeys](#hotkeys)).
-- **Remote control** through obs-websocket for Streamer.bot, SAMMI, Touch
-  Portal and scripts (see [Remote control](#remote-control-obs-websocket)).
+- **Remote control** through obs-websocket for Streamer.bot (verified, 1.0.7
+  on Linux/Wine), SAMMI, Touch Portal and scripts (see [Remote control](#remote-control-obs-websocket)).
 - **Safe restore**: the active Deck is re-applied after OBS finishes loading
   (so docks added by other plugins exist). A missing dock never causes an error,
   and a dock that is newer than a Deck is left as it is.
@@ -241,20 +241,25 @@ Event **`DeckChanged`** (obs-websocket `VendorEvent`, in the default
 "all events" subscription) is sent on every switch:
 `{"name": "Gaming", "id": "...", "source": "tab" | "menu" | "hotkey" | "websocket" | "import"}`.
 
-**Streamer.bot / SAMMI / other tools**: use the tool's raw/custom OBS request
-action with request type `CallVendorRequest` and this data:
+**Streamer.bot** (verified with Streamer.bot 1.0.7 on Linux/Wine): add an
+*OBS Raw* sub-action and paste the **full request**, including the outer
+`CallVendorRequest` wrapper:
 
 ```json
-{
-  "vendorName": "dock-deck",
-  "requestType": "SetCurrentDeck",
-  "requestData": { "name": "Gaming" }
-}
+{"requestType":"CallVendorRequest","requestData":{"vendorName":"dock-deck","requestType":"SetCurrentDeck","requestData":{"name":"Chatting"}}}
 ```
 
 ```json
-{ "vendorName": "dock-deck", "requestType": "NextDeck", "requestData": {} }
+{"requestType":"CallVendorRequest","requestData":{"vendorName":"dock-deck","requestType":"NextDeck","requestData":{}}}
 ```
+
+Pasting only the inner part (`{"vendorName": "dock-deck", ...}`) fails with
+`OBS request failed [204]: Your request type is not valid`.
+
+**SAMMI / other tools** (not verified yet): use the tool's raw/custom OBS
+request action the same way, with request type `CallVendorRequest` and the
+inner `requestData` shown above; if the tool takes one JSON blob, use the full
+wrapper as for Streamer.bot.
 
 ```json
 {
