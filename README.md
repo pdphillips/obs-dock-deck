@@ -1,45 +1,73 @@
 # Dock Deck for OBS
 
-Switch OBS dock layouts with one-click tabs, hotkeys, Stream Deck, or scene changes. Lightweight, Windows + Linux.
+Switch OBS dock arrangements (Decks) with one-click tabs, hotkeys, Stream Deck, or scene changes. Lightweight, Windows + Linux.
 
-Save your OBS dock arrangements as named layouts and switch between them from a
-slim tab strip under the menu bar. Windows and Linux. GPL-2.0-or-later.
+Save your OBS dock arrangements as named **Decks** and switch between them from
+slim tabs under the menu bar. Windows and Linux. GPL-2.0-or-later.
 
 Scaffolded from [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate)
 with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABLE_QT`) is on.
 
-## Features (v0.2.1)
+## Terms
 
-- **Layouts**: a layout is a named snapshot of OBS's docks: where every dock
-  sits (`QMainWindow::saveState()`), plus which docks are shown or hidden.
-- **Tab strip** directly under the menu bar: one tab per layout, plus a small
-  **+** to save the current docks as a new layout. Drag tabs to reorder them.
-- **Right-click a tab**: *Save Current Docks Into This Layout*, *Rename...*,
-  *Delete...*. Double-click a tab to rename it.
-- **Tools → Dock Deck**: switch layouts, create or save layouts, show or hide
-  the tab strip, and turn *Remember Dock Changes Per Layout* on or off.
-- **Remember Dock Changes Per Layout** (on by default): when you move docks
-  around, the active layout keeps those changes, like pages. Turn it off if you
-  only want layouts to change when you save them explicitly.
-- **Export / import**: **Tools → Dock Deck → Export Layouts...** saves all
-  layouts to a `.json` file; right-click a tab → **Export This Layout...** saves
-  just that one. **Import Layouts...** merges a file into your tabs. When an
-  imported name already exists you choose **Replace** (keeps the tab's place),
-  **Keep Both** (adds "Name (2)"), or **Skip**, with an option to do the same
-  for the rest. Damaged entries are ignored and bad files are rejected with a
-  message; nothing is changed until a file has been read successfully.
-- **Safe restore**: the active layout is re-applied after OBS finishes loading
-  (so docks added by other plugins exist). A missing dock is skipped, and a dock
-  that is newer than a layout is left as it is.
+- **Deck**: one named dock arrangement, shown as one tab under the menu bar.
+- **Deck Collection**: all of your Decks together.
 
-Window size and position are not part of a layout; only the docks are.
+## Features (v0.2.2)
 
-**Sharing layouts between computers:** layouts refer to docks by their internal
+- **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
+  (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
+  title.
+- **Deck tabs** directly under the menu bar: one tab per Deck, plus a small
+  **+** to save the current docks as a new Deck. Drag tabs to reorder them.
+- **Right-click a Deck tab**: *Save Current Docks Into This Deck*,
+  *Rename Deck...*, *Delete Deck...*, *Export Deck...*. Double-click a tab to
+  rename it.
+- **Tools → Dock Deck**: switch Decks, *New Deck From Current Docks...*,
+  *Export Deck Collection...*, *Import Decks...*, and the settings
+  *Show Deck Tabs*, *Remember Dock Changes Per Deck* and
+  *Show Placeholders for Missing Docks*.
+- **Remember Dock Changes Per Deck** (on by default): when you move docks
+  around, the active Deck keeps those changes, like pages. Turn it off if you
+  only want Decks to change when you save them explicitly.
+- **Export / import**: *Export Deck...* saves one Deck, *Export Deck Collection...*
+  saves all of them (default file names `<Deck name>.dockdeck.json` and
+  `Deck Collection.dockdeck.json`). *Import Decks...* merges a file into your
+  Deck Collection. When an imported name already exists you choose **Replace**
+  (keeps the tab's place), **Keep Both** (adds "Name (2)"), or **Skip**, with an
+  option to do the same for the rest. Damaged entries are ignored and bad files
+  are rejected with a message; nothing changes until a file has been read
+  successfully.
+- **Placeholders for missing docks** (on by default): if a Deck shows a dock
+  that isn't available (plugin not installed, a browser dock from another
+  computer, or a plugin that loads late), a placeholder panel holds its spot and
+  says *Missing dock: <title>* with a hint to install the plugin that provides
+  it or close the panel. When the real dock appears, it moves into that spot and
+  the placeholder disappears. Switching to a Deck that doesn't use the dock
+  removes the placeholder.
+- **Safe restore**: the active Deck is re-applied after OBS finishes loading
+  (so docks added by other plugins exist). A missing dock never causes an error,
+  and a dock that is newer than a Deck is left as it is.
+
+Window size and position are not part of a Deck; only the docks are.
+
+**Sharing Decks between computers:** Decks refer to docks by their internal
 names. Docks from plugins (or browser docks) that don't exist on the importing
-computer are skipped when the layout is used, and the import summary lists them.
-Install the same plugins / create the same browser docks to get them back.
-The placeholder **Docks → Dock Deck** panel from 0.1.0 is gone; the tab strip
-and the Tools menu replace it.
+computer can't appear there: they get a placeholder (if that setting is on) and
+the import summary lists them. Install the same plugins / create the same
+browser docks to get them back.
+
+### How placeholders work
+
+Before a Deck is applied, Dock Deck adds a plain Qt dock with the missing
+dock's internal name for each missing dock the Deck shows, so Qt's
+`restoreState()` puts it exactly where the real one belongs. Placeholders are
+not registered with OBS (no Docks-menu entry). Because they use the real dock's
+name, anything that saves the window layout (OBS on exit, Dock Deck's
+auto-save) records the real dock's spot, so nothing foreign is left behind.
+When a new dock is added to the OBS window, Dock Deck checks whether it matches
+a placeholder; if so it captures the window with the placeholder still in
+place, removes the placeholder and restores, which moves the real dock in.
 
 ### Where settings are stored
 
@@ -48,39 +76,43 @@ One global file (not per profile or scene collection yet):
 - Linux: `~/.config/obs-studio/plugin_config/obs-dock-deck/layouts.json`
 - Windows: `%APPDATA%\obs-studio\plugin_config\obs-dock-deck\layouts.json`
 
-Export files use the same entries wrapped as
-`{"format": "dock-deck-layouts", "version": 1, "layouts": [{"name", "state", "docks"}]}`,
-where `state` is base64 `QMainWindow::saveState()` data and `docks` maps each
-dock name to shown/hidden. Import also accepts a copied `layouts.json`.
+The file keeps its old name and format so earlier versions' settings load
+unchanged. Export files wrap the same entries as
+`{"format": "dock-deck-layouts", "version": 1, "layouts": [{"name", "state", "docks", "titles"}]}`,
+where `state` is base64 `QMainWindow::saveState()` data, `docks` maps each
+dock name to shown/hidden, and `titles` (optional, new in 0.2.2) maps each dock
+name to its title. Import also accepts a copied `layouts.json` and files from
+0.2.1 (no titles); 0.2.1 can read 0.2.2 files too.
 
 If the file is ever unreadable it is kept as `layouts.json.bad`, and Dock Deck
-starts fresh with a single **Main** layout.
+starts fresh with a single **Main** Deck.
 
 ## Usage
 
-1. Start OBS. On the first run, your current docks become the **Main** tab.
+1. Start OBS. On the first run, your current docks become the **Main** Deck.
 2. Arrange docks the way you want for another task, then click **+** and name
-   it (for example "Gaming"). That arrangement is now its own tab.
-3. Click tabs to switch. With *Remember Dock Changes Per Layout* on, changes you
-   make on a tab stay with that tab.
-4. To move layouts to another computer, use **Tools → Dock Deck → Export
-   Layouts...** there and **Import Layouts...** here.
-5. To hide the strip, right-click it → *Hide Tab Strip*. Bring it back with
-   **Tools → Dock Deck → Show Tab Strip**.
+   it (for example "Gaming"). That arrangement is now its own Deck.
+3. Click Deck tabs to switch. With *Remember Dock Changes Per Deck* on, changes
+   you make on a Deck stay with that Deck.
+4. To move Decks to another computer, use **Tools → Dock Deck → Export Deck
+   Collection...** (or right-click a tab → *Export Deck...*) there and
+   **Import Decks...** here.
+5. To hide the tabs, right-click them → *Hide Deck Tabs*. Bring them back with
+   **Tools → Dock Deck → Show Deck Tabs**.
 
 ## For developers
 
-Every layout switch goes through one function,
-`DockDeck::switchToLayout(name, source)` in `src/dock-deck.cpp`. It is safe to
+Every Deck switch goes through one function,
+`DockDeck::switchToDeck(name, source)` in `src/dock-deck.cpp`. It is safe to
 call from any thread and before OBS finishes loading. Future triggers (hotkeys,
 obs-websocket, scene links) and the optional fade will call or hook into it.
 
 | File | What it does |
 | --- | --- |
 | `src/plugin-main.cpp` | Module entry points and OBS frontend events |
-| `src/dock-deck.*` | Layout switching, startup restore, menus, dialogs |
-| `src/tab-strip.*` | The tab strip toolbar (view only; emits signals) |
-| `src/layout-store.*` | Layout data model, config load/save, export/import file format |
+| `src/dock-deck.*` | Deck switching, startup restore, placeholders, menus, dialogs |
+| `src/deck-strip.*` | The Deck tabs toolbar (view only; emits signals) |
+| `src/deck-store.*` | Deck data model, config load/save, export/import file format |
 
 ## Build on Linux (against the system OBS)
 
@@ -109,8 +141,8 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.2.1)`,
-and the Dock Deck tab strip should appear under the menu bar.
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.2.2)`,
+and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
 
@@ -128,16 +160,23 @@ Copy the built `obs-dock-deck.dll` to
 
 ## CI
 
-GitHub Actions builds Ubuntu and Windows (`.github/workflows`).
+GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every push to `main`.
 
 ## Roadmap
 
 1. ✅ Empty plugin loads in OBS (Linux + Windows).
-2. ✅ Save/load dock layouts with `QMainWindow::saveState` / `restoreState`, plus a
-   minimalist tab strip under the menu bar, one tab per layout.
-3. Per-layout hotkeys (Stream Deck) and obs-websocket vendor requests for remote
+2. ✅ Save/load dock arrangements with `QMainWindow::saveState` / `restoreState`,
+   plus minimalist tabs under the menu bar, one tab per Deck.
+3. Per-Deck hotkeys (Stream Deck) and obs-websocket vendor requests for remote
    switching (bots like Streamer.bot/SAMMI can expose it to chat moderators).
-4. Link layouts to scenes and scene collections for automatic switching.
-5. Optional quick fade when switching layouts (off while streaming/recording by
+4. Link Decks to scenes and scene collections for automatic switching.
+5. Deck packs: export/import a Deck together with selected scenes, sources and
+   media files. Per-item checkboxes on both export and import, plus a master
+   *Select all / none* checkbox and per-group (scenes, sources, media)
+   all/none checkboxes (tri-state). Media that is left out (for example
+   purchased overlays) imports as an empty, unpointed source for the user to
+   fill in. Plugins the pack needs but that are missing are listed. Secrets
+   (stream keys, passwords, tokens) are never included.
+6. Optional quick fade when switching Decks (off while streaming/recording by
    default, can be turned off completely).
-6. Scene Organizer dock with search and nested folders.
+7. Scene Organizer dock with search and nested folders.
