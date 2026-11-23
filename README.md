@@ -1,4 +1,4 @@
-# DockDeck for OBS
+# Dock Deck for OBS
 
 Switch OBS dock layouts with one-click tabs, hotkeys, Stream Deck, or scene changes. Lightweight, Windows + Linux.
 
@@ -11,7 +11,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 ## Status
 
 Milestone 1: an empty plugin that logs on load/unload and adds a placeholder
-**DockDeck** dock (Docks menu).
+**Dock Deck** dock (Docks menu).
 
 ## Build on Linux (against the system OBS)
 
@@ -41,7 +41,7 @@ grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
 You should see `[obs-dock-deck] plugin loaded successfully (version 0.1.0)`,
-and **Docks → DockDeck** should be listed.
+and **Docks → Dock Deck** should be listed.
 
 ## Build on Windows
 

@@ -1,5 +1,5 @@
 /*
-DockDeck for OBS
+Dock Deck for OBS
 Copyright (C) 2026 Paul Phillips
 
 This program is free software; you can redistribute it and/or modify
@@ -32,7 +32,7 @@ static constexpr const char *kDockId = "obs-dock-deck-main";
 
 const char *obs_module_name(void)
 {
-	return "DockDeck";
+	return "Dock Deck";
 }
 
 const char *obs_module_description(void)
