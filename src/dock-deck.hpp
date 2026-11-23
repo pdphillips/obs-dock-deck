@@ -146,24 +146,22 @@ private:
 	void renameDeck(const QString &name);
 	void deleteDeck(const QString &name);
 	void moveDeck(int from, int to);
-	void exportDecks(const QString &onlyName = QString());
-	void importDecks();
 	// Adds an imported deck (a clash with Keep Both gets "Name (2)") or, with
 	// `replace`, takes over the same-named deck's docks. True if replaced.
 	bool mergeImportedDeck(Deck deck, bool replace, bool *reapplyActive);
-	// Deck packs (deck-pack.cpp): decks plus scenes, sources and media.
+	// Deck packs (deck-pack.cpp), the one export/import format: Decks plus,
+	// optionally, scenes, sources and media. With `onlyName` only that Deck
+	// starts checked, otherwise all Decks do.
 	void exportPack(const QString &onlyName = QString());
 	void importPack();
 	void setTabStripVisible(bool visible);
 	void setAutoSave(bool enabled);
 
 	// Name prompt. With `importChosen` set, the dialog also offers
-	// "Import Deck or Deck Collection..."; picking it returns an empty name
+	// "Import Deck Pack..."; picking it returns an empty name
 	// and sets *importChosen.
 	QString askForName(const QString &title, const QString &initial, const QString &ignore,
 			   bool *importChosen = nullptr);
-	// Checklist of all decks for Export Deck Collection; empty = cancelled.
-	QStringList pickDecksForExport();
 	QString uniqueName(const QString &base) const;
 
 	QMainWindow *main_;

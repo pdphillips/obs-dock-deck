@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.6.0)
+## Features (v0.6.1)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -22,13 +22,12 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
   **+** to save the current docks as a new Deck. Drag tabs to reorder them.
 - **Right-click a Deck tab**: *Lock Deck* / *Unlock Deck*,
   *Save Current Docks Into This Deck*,
-  *Rename Deck...*, *Delete Deck...*, *Export Deck...*, *Export Deck Pack...*.
+  *Rename Deck...*, *Delete Deck...*, *Export Deck Pack...*.
   Double-click a tab to
   rename it.
 - **Tools → Dock Deck**: switch Decks, *New Deck From Current Docks...*,
-  *Lock All Decks* / *Unlock All Decks*, *Export Deck Collection...*,
-  *Import Decks...*, *Export Deck Pack...*, *Import Deck Pack...*, and the
-  settings
+  *Lock All Decks* / *Unlock All Decks*, *Export Deck Pack...*,
+  *Import Deck Pack...*, and the settings
   *Show Deck Tabs*, *Remember Dock Changes Per Deck* and
   *Show Placeholders for Missing Docks*.
 - **Deck locking**: each tab has a small padlock; click it to lock or unlock
@@ -46,17 +45,12 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Remember Dock Changes Per Deck** (on by default): when you move docks
   around, the active Deck keeps those changes, like pages. Turn it off if you
   only want Decks to change when you save them explicitly.
-- **Export / import**: *Export Deck...* saves one Deck. *Export Deck Collection...*
-  first lists all Decks with checkboxes (all checked, plus *Select all / none*)
-  so you choose which Decks go into the file; Export is disabled until at least
-  one is checked. Default file names are `<Deck name>.dockdeck.json` and
-  `Deck Collection.dockdeck.json`. The **+** dialog also has
-  *Import Deck or Deck Collection...*, which closes it and starts the import. *Import Decks...* merges a file into your
-  Deck Collection. When an imported name already exists you choose **Replace**
-  (keeps the tab's place), **Keep Both** (adds "Name (2)"), or **Skip**, with an
-  option to do the same for the rest. Damaged entries are ignored and bad files
-  are rejected with a message; nothing changes until a file has been read
-  successfully.
+- **Export / import**: everything is a **Deck pack** (`*.dockdeck`), whether
+  it holds one Deck, several, or Decks with their scenes, sources and media.
+  Right-click a tab → *Export Deck Pack...* starts with that Deck checked;
+  Tools → Dock Deck → *Export Deck Pack...* starts with every Deck checked.
+  The **+** dialog also has *Import Deck Pack...*. A pack with only Decks
+  checked is just your dock layouts. See [Deck packs](#deck-packs).
 - **Placeholders for missing docks** (on by default): if a Deck shows a dock
   that isn't available (plugin not installed, a browser dock from another
   computer, or a plugin that loads late), a placeholder panel holds its spot and
@@ -103,30 +97,28 @@ One global file (not per profile or scene collection yet):
 - Windows: `%APPDATA%\obs-studio\plugin_config\obs-dock-deck\layouts.json`
 
 The file keeps its old name and format so earlier versions' settings load
-unchanged. Export files wrap the same entries as
-`{"format": "dock-deck-layouts", "version": 1, "layouts": [{"name", "state", "docks", "titles", "locked"}]}`,
+unchanged. It holds `{"format": "dock-deck-layouts", "version": 1, "layouts": [{"name", "state", "docks", "titles", "locked"}]}`,
 where `state` is base64 `QMainWindow::saveState()` data, `docks` maps each
 dock name to shown/hidden, and `titles` (optional, new in 0.2.2) maps each dock
 name to its title, and `locked` (optional, new in 0.3.0, written only when
 `true`) marks a locked Deck, and `id` (new in 0.4.0) is the Deck's permanent
 id. Decks without an id get one when loaded. `scenes` (optional, new in 0.5.0)
-maps scene collection name to the linked scene. Import also accepts a copied `layouts.json` and
-files from 0.2.x (no titles / no lock: imported unlocked); older versions read
-0.3.0 files too and simply ignore the lock.
+maps scene collection name to the linked scene. Deck packs store each Deck
+in this same form inside their `manifest.json`.
 
 If the file is ever unreadable it is kept as `layouts.json.bad`, and Dock Deck
 starts fresh with a single **Main** Deck.
 
 ## Deck packs
 
-A Deck pack (`*.dockdeck`) is one file with one or more Decks plus, if you
-want, the scenes, sources and media files they use, so a whole setup can be
-shared or moved to another computer. Plain *Export Deck...* /
-*Export Deck Collection...* (`*.dockdeck.json`, docks only) still work as
-before.
+A Deck pack (`*.dockdeck`) is Dock Deck's only export/import file. It holds
+one or more Decks plus, if you want, the scenes, sources and media files they
+use, so a single Deck, a set of Decks or a whole setup can be shared or moved
+to another computer.
 
-**Export** (Tools → Dock Deck → *Export Deck Pack...*, or right-click a Deck
-tab → *Export Deck Pack...*, which pre-selects that Deck): a checklist grouped
+**Export** (right-click a Deck tab → *Export Deck Pack...*, which checks that
+Deck, or Tools → Dock Deck → *Export Deck Pack...*, which checks every Deck):
+a checklist grouped
 as **Decks / Scenes / Sources / Media files**, with a *Select all / none* box
 and an all/none box per group (both tri-state). Checking something checks
 what it needs: a Deck's linked scene, a scene's sources, nested scenes and
@@ -139,7 +131,8 @@ Afterwards a summary lists what was left out for privacy, sources exported
 without their file, and settings that contain web addresses (check these
 don't contain private links).
 
-**Import** (Tools → Dock Deck → *Import Deck Pack...*): the same checklist,
+**Import** (Tools → Dock Deck → *Import Deck Pack...*, or **+** →
+*Import Deck Pack...*): the same checklist,
 everything checked. Names that already exist are marked, and each one gets
 its own choice: **Rename** (default; adds " (2)"), **Skip** (keep and use the
 existing one) or **Replace** (the existing scene/source is removed; for Decks,
@@ -194,8 +187,7 @@ tooltip shows the linked scene.
   deleted, the Deck just stops switching scenes, and its tooltip says the scene
   is missing. Link it again, or unlink it.
 - OBS starting up and importing Decks never change the scene.
-- Links travel with exports (*Export Deck...*, *Export Deck Collection...*)
-  and come back on import. On another computer they only work if the scene
+- Links travel with Deck packs and come back on import. On another computer they only work if the scene
   collection and scene have the same names.
 - Dock Deck does not switch Decks when you change scenes. Links go one way
   only: Deck → scene.
@@ -313,8 +305,8 @@ until you press Ctrl+C.
 3. Click Deck tabs to switch. With *Remember Dock Changes Per Deck* on, changes
    you make on a Deck stay with that Deck.
 4. To move Decks to another computer, use **Tools → Dock Deck → Export Deck
-   Collection...** (or right-click a tab → *Export Deck...*) there and
-   **Import Decks...** here.
+   Pack...** (or right-click a tab → *Export Deck Pack...*) there and
+   **Import Deck Pack...** here.
 5. To protect a finished Deck, click the padlock on its tab (or right-click →
    *Lock Deck*). Click it again to make changes.
 6. To hide the tabs, right-click them → *Hide Deck Tabs*. Bring them back with
@@ -369,7 +361,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.6.0)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.6.1)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -385,6 +377,19 @@ cmake --build --preset windows-x64 --config RelWithDebInfo
 Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
+
+## Manual test checklist (0.6.1)
+
+One file format:
+1. Right-click a Deck tab: there is *Export Deck Pack...* (no separate
+   *Export Deck...*). It opens the pack checklist with only that Deck checked,
+   plus its linked scene and what that scene uses.
+2. Tools → Dock Deck: only *Export Deck Pack...* and *Import Deck Pack...*
+   (no *Export Deck Collection...* / *Import Decks...*). Export starts with
+   every Deck checked. Uncheck *Scenes*, *Sources* and *Media files* and export:
+   a docks-only `.dockdeck`.
+3. Click **+** → *Import Deck Pack...*: the file picker lists `.dockdeck`
+   files, including the one just saved. Importing it adds the Decks only.
 
 ## Manual test checklist (0.6.0)
 
@@ -468,15 +473,15 @@ Locked splitters:
 From 0.3.1:
 
 Export / import:
-1. Tools → Dock Deck → *Export Deck Collection...*: every Deck is listed and
+1. Tools → Dock Deck → *Export Deck Pack...*: every Deck is listed and
    checked. *Select all / none* clears all (Export greys out) and checks all;
    unchecking one Deck makes it partial. Export two Decks, then import the file:
    only those two come in.
 2. With a Deck whose dock is missing (placeholder), export a *different* Deck,
    delete it and import it: the summary must not mention the other Deck's
    missing dock.
-3. Click **+** → *Import Deck or Deck Collection...*: the name dialog closes and
-   the import file picker opens.
+3. Click **+** → *Import Deck Pack...*: the name dialog closes and the import
+   file picker opens.
 
 From 0.3.0:
 
@@ -502,7 +507,7 @@ Deck locking:
    docks are free again. With a Deck locked, toggling OBS's lock on/off leaves
    the Deck locked.
 6. Lock a Deck, restart OBS: still locked. Export it and import it on the other
-   computer: it arrives locked; 0.2.x files import unlocked.
+   computer: it arrives locked.
 
 ## CI
 

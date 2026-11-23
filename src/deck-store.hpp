@@ -66,23 +66,9 @@ struct Deck {
 // between machines. Decks reference docks by their internal names, so docks
 // from plugins missing on the importing machine are simply skipped on apply.
 namespace DeckFile {
-// One deck as JSON and back (validated; used by export files and packs).
+// One deck as JSON and back (validated; used by Deck packs).
 QJsonObject toJson(const Deck &deck);
 bool fromJson(const QJsonValue &value, Deck *out);
-
-// Writes {"format": "dock-deck-layouts", "version": 1, "layouts": [...]}.
-bool write(const QString &path, const QVector<Deck> &decks, QString *error);
-
-struct ReadResult {
-	QVector<Deck> decks;    // valid entries, in file order
-	int invalidEntries = 0; // entries that were skipped as malformed
-};
-
-enum class ReadError { None, CannotOpen, TooLarge, NotJson, WrongFormat, TooNew, NoDecks };
-
-// Validates everything and never crashes on bad input. Anything other than
-// ReadError::None means nothing usable was found.
-ReadError read(const QString &path, ReadResult *result);
 } // namespace DeckFile
 
 class DeckStore {

@@ -381,7 +381,7 @@ void DockDeck::exportPack(const QString &onlyName)
 		it.detail = deckDetail(deck, scene);
 		if (!scene.isEmpty() && inv.find(scene))
 			it.deps << QStringLiteral("s:") + scene;
-		it.checked = onlyName.isEmpty() ? deck.name == store_.active : deck.name == onlyName;
+		it.checked = onlyName.isEmpty() || deck.name == onlyName; // linked scenes follow
 		items.append(it);
 	}
 	for (const QVector<PackCore::Source> *list : {&inv.scenes, &inv.sources}) {

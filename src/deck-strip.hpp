@@ -60,7 +60,6 @@ signals:
 	void overwriteRequested(const QString &name);
 	void renameRequested(const QString &name);
 	void deleteRequested(const QString &name);
-	void exportRequested(const QString &name);
 	void packExportRequested(const QString &name);
 	void lockToggled(const QString &name);
 	void linkSceneRequested(const QString &name);

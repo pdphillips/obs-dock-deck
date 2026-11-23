@@ -29,14 +29,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // Bump if the file format changes incompatibly.
 static constexpr int kFormatVersion = 1;
 
-// Export files carry this marker so random JSON is rejected early.
-static constexpr const char *kExportFormat = "dock-deck-layouts";
-
 // Hard limits that keep a hostile or broken file from doing anything silly.
-static constexpr qint64 kMaxFileBytes = 16 * 1024 * 1024;
 static constexpr int kMaxNameLength = 100;
 static constexpr int kMaxTitleLength = 200;
-static constexpr int kMaxDecks = 500;
 
 // QMainWindow::saveState() data starts with a 32-bit 0xff marker.
 static bool looksLikeMainWindowState(const QByteArray &state)
@@ -144,67 +139,6 @@ static bool deckFromJson(const QJsonValue &value, Deck *out)
 
 	*out = deck;
 	return true;
-}
-
-bool DeckFile::write(const QString &path, const QVector<Deck> &decks, QString *error)
-{
-	QJsonArray arr;
-	for (const Deck &deck : decks)
-		arr.append(deckToJson(deck));
-
-	QJsonObject root;
-	root.insert(QStringLiteral("format"), QString::fromLatin1(kExportFormat));
-	root.insert(QStringLiteral("version"), kFormatVersion);
-	root.insert(QStringLiteral("layouts"), arr);
-
-	QSaveFile file(path);
-	if (!file.open(QIODevice::WriteOnly) || file.write(QJsonDocument(root).toJson(QJsonDocument::Indented)) < 0 ||
-	    !file.commit()) {
-		if (error)
-			*error = file.errorString();
-		return false;
-	}
-	return true;
-}
-
-DeckFile::ReadError DeckFile::read(const QString &path, ReadResult *result)
-{
-	QFile file(path);
-	if (!file.open(QIODevice::ReadOnly))
-		return ReadError::CannotOpen;
-	if (file.size() > kMaxFileBytes)
-		return ReadError::TooLarge;
-
-	QJsonParseError err{};
-	const QJsonDocument doc = QJsonDocument::fromJson(file.read(kMaxFileBytes), &err);
-	if (err.error != QJsonParseError::NoError || !doc.isObject())
-		return ReadError::NotJson;
-
-	// Accept export files and also Dock Deck's own layouts.json (no marker).
-	const QJsonObject root = doc.object();
-	const QJsonValue format = root.value(QStringLiteral("format"));
-	if (!format.isUndefined() && format.toString() != QString::fromLatin1(kExportFormat))
-		return ReadError::WrongFormat;
-	if (root.value(QStringLiteral("version")).toInt(kFormatVersion) > kFormatVersion)
-		return ReadError::TooNew;
-
-	const QJsonValue decks = root.value(QStringLiteral("layouts"));
-	if (!decks.isArray())
-		return ReadError::NoDecks;
-
-	ReadResult out;
-	for (const QJsonValue &value : decks.toArray()) {
-		Deck deck;
-		if (out.decks.size() < kMaxDecks && deckFromJson(value, &deck))
-			out.decks.append(deck);
-		else
-			++out.invalidEntries;
-	}
-
-	if (out.decks.isEmpty())
-		return ReadError::NoDecks;
-	*result = out;
-	return ReadError::None;
 }
 
 DeckStore::LoadResult DeckStore::load(const QString &path)

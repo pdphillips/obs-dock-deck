@@ -28,13 +28,10 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QActionGroup>
 #include <QDir>
 #include <QDockWidget>
-#include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QEvent>
-#include <QFileDialog>
 #include <QFileInfo>
 #include <QLabel>
 #include <QMainWindow>
@@ -42,10 +39,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QRegularExpression>
 #include <QScopedValueRollback>
-#include <QSet>
-#include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -162,7 +156,6 @@ DockDeck::DockDeck(QMainWindow *mainWindow) : QObject(mainWindow), main_(mainWin
 	connect(strip_, &DeckStrip::overwriteRequested, this, &DockDeck::overwriteDeck);
 	connect(strip_, &DeckStrip::renameRequested, this, &DockDeck::renameDeck);
 	connect(strip_, &DeckStrip::deleteRequested, this, &DockDeck::deleteDeck);
-	connect(strip_, &DeckStrip::exportRequested, this, [this](const QString &name) { exportDecks(name); });
 	connect(strip_, &DeckStrip::packExportRequested, this, [this](const QString &name) { exportPack(name); });
 	connect(strip_, &DeckStrip::hideRequested, this, [this]() { setTabStripVisible(false); });
 	connect(strip_, &DeckStrip::deckMoved, this, &DockDeck::moveDeck);
@@ -804,14 +797,9 @@ void DockDeck::rebuildToolsMenu()
 	}
 	toolsMenu_->addSeparator();
 
-	QAction *exportAll = toolsMenu_->addAction(T("DockDeck.Menu.Export"));
-	exportAll->setEnabled(ready_ && !store_.decks.isEmpty());
-	connect(exportAll, &QAction::triggered, this, [this]() { exportDecks(); });
-	QAction *import = toolsMenu_->addAction(T("DockDeck.Menu.Import"));
-	import->setEnabled(ready_);
-	connect(import, &QAction::triggered, this, &DockDeck::importDecks);
+	// Everything is a Deck pack: one Deck, several, or Decks with scenes.
 	QAction *exportPackAction = toolsMenu_->addAction(T("DockDeck.Menu.ExportPack"));
-	exportPackAction->setEnabled(ready_);
+	exportPackAction->setEnabled(ready_ && !store_.decks.isEmpty());
 	connect(exportPackAction, &QAction::triggered, this, [this]() { exportPack(); });
 	QAction *importPackAction = toolsMenu_->addAction(T("DockDeck.Menu.ImportPack"));
 	importPackAction->setEnabled(ready_);
@@ -887,72 +875,6 @@ QString DockDeck::askForName(const QString &title, const QString &initial, const
 	}
 }
 
-QStringList DockDeck::pickDecksForExport()
-{
-	QDialog dialog(main_);
-	dialog.setWindowTitle(T("DockDeck.Dialog.ExportCollectionTitle"));
-	auto *layout = new QVBoxLayout(&dialog);
-	layout->addWidget(new QLabel(T("DockDeck.Dialog.ExportPick"), &dialog));
-
-	auto *all = new QCheckBox(T("DockDeck.Dialog.SelectAll"), &dialog);
-	all->setTristate(true);
-	layout->addWidget(all);
-
-	auto *list = new QListWidget(&dialog);
-	for (const Deck &deck : store_.decks) {
-		auto *item = new QListWidgetItem(deck.locked ? T("DockDeck.Menu.LockedDeck").arg(deck.name) : deck.name,
-						 list);
-		item->setData(Qt::UserRole, deck.name);
-		item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
-		item->setCheckState(Qt::Checked);
-	}
-	layout->addWidget(list);
-
-	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, &dialog);
-	QPushButton *exportBtn = buttons->addButton(T("DockDeck.Dialog.ExportButton"), QDialogButtonBox::AcceptRole);
-	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-	layout->addWidget(buttons);
-
-	// The master box mirrors the list (checked / unchecked / partial), and
-	// clicking it selects all or none. Export needs at least one deck.
-	bool syncing = false;
-	auto syncMaster = [&]() {
-		int checked = 0;
-		for (int i = 0; i < list->count(); ++i)
-			checked += list->item(i)->checkState() == Qt::Checked ? 1 : 0;
-		syncing = true;
-		all->setCheckState(checked == 0 ? Qt::Unchecked
-						: (checked == list->count() ? Qt::Checked : Qt::PartiallyChecked));
-		syncing = false;
-		exportBtn->setEnabled(checked > 0);
-	};
-	connect(list, &QListWidget::itemChanged, &dialog, [&]() {
-		if (!syncing)
-			syncMaster();
-	});
-	connect(all, &QCheckBox::clicked, &dialog, [&]() {
-		// Qt cycles unchecked -> partial -> checked -> unchecked on click:
-		// so from none or some, a click selects all; from all, none.
-		const bool selectAll = all->checkState() != Qt::Unchecked;
-		syncing = true;
-		for (int i = 0; i < list->count(); ++i)
-			list->item(i)->setCheckState(selectAll ? Qt::Checked : Qt::Unchecked);
-		syncing = false;
-		syncMaster();
-	});
-	syncMaster();
-
-	if (dialog.exec() != QDialog::Accepted)
-		return {};
-	QStringList names;
-	for (int i = 0; i < list->count(); ++i) {
-		if (list->item(i)->checkState() == Qt::Checked)
-			names.append(list->item(i)->data(Qt::UserRole).toString());
-	}
-	return names;
-}
-
 void DockDeck::newDeckFromCurrent()
 {
 	if (!ready_)
@@ -969,7 +891,7 @@ void DockDeck::newDeckFromCurrent()
 	bool importInstead = false;
 	const QString name = askForName(T("DockDeck.Dialog.NewTitle"), suggestion, QString(), &importInstead);
 	if (importInstead) {
-		importDecks();
+		importPack();
 		return;
 	}
 	if (name.isEmpty())
@@ -1320,47 +1242,6 @@ QString DockDeck::uniqueName(const QString &base) const
 	}
 }
 
-void DockDeck::exportDecks(const QString &onlyName)
-{
-	if (!ready_)
-		return;
-
-	// Make sure the active deck reflects what is on screen right now.
-	if (store_.autoSave)
-		captureActive();
-
-	// A collection: let the user pick which decks go into it.
-	const QStringList names = onlyName.isEmpty() ? pickDecksForExport() : QStringList{onlyName};
-	QVector<Deck> decks;
-	for (const QString &name : names) {
-		if (const Deck *deck = store_.find(name))
-			decks.append(*deck);
-	}
-	if (decks.isEmpty())
-		return;
-
-	// Suggest "<Deck name>.dockdeck.json" (minus characters that are not
-	// allowed in file names), or "Deck Collection.dockdeck.json" for several.
-	QString base = decks.size() == 1 ? decks.front().name : T("DockDeck.CollectionFileName");
-	base.replace(QRegularExpression(QStringLiteral("[\\\\/:*?\"<>|]")), QStringLiteral("_"));
-	const QString fileName = base.trimmed() + QStringLiteral(".dockdeck.json");
-	const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-
-	const QString title =
-		T(onlyName.isEmpty() ? "DockDeck.Dialog.ExportCollectionTitle" : "DockDeck.Dialog.ExportDeckTitle");
-	const QString path = QFileDialog::getSaveFileName(main_, title, QDir(dir).filePath(fileName),
-							  T("DockDeck.Dialog.FileFilter"));
-	if (path.isEmpty())
-		return;
-
-	QString error;
-	if (!DeckFile::write(path, decks, &error)) {
-		QMessageBox::warning(main_, title, T("DockDeck.Dialog.ExportFailed").arg(path, error));
-		return;
-	}
-	obs_log(LOG_INFO, "exported %d deck(s) to %s", static_cast<int>(decks.size()), path.toUtf8().constData());
-}
-
 bool DockDeck::mergeImportedDeck(Deck deck, bool replace, bool *reapplyActive)
 {
 	// Case-insensitive clash, matching how names are validated.
@@ -1390,129 +1271,4 @@ bool DockDeck::mergeImportedDeck(Deck deck, bool replace, bool *reapplyActive)
 	store_.decks.append(deck);
 	store_.ensureIds();
 	return false;
-}
-
-void DockDeck::importDecks()
-{
-	if (!ready_)
-		return;
-
-	const QString dir = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-	const QString path = QFileDialog::getOpenFileName(main_, T("DockDeck.Dialog.ImportTitle"), dir,
-							  T("DockDeck.Dialog.FileFilter"));
-	if (path.isEmpty())
-		return;
-
-	DeckFile::ReadResult file;
-	const DeckFile::ReadError err = DeckFile::read(path, &file);
-	if (err != DeckFile::ReadError::None) {
-		const char *key = "DockDeck.Import.Error.Invalid";
-		switch (err) {
-		case DeckFile::ReadError::CannotOpen:
-			key = "DockDeck.Import.Error.CannotOpen";
-			break;
-		case DeckFile::ReadError::TooNew:
-			key = "DockDeck.Import.Error.TooNew";
-			break;
-		case DeckFile::ReadError::NoDecks:
-			key = "DockDeck.Import.Error.NoDecks";
-			break;
-		default:
-			break;
-		}
-		QMessageBox::warning(main_, T("DockDeck.Dialog.ImportTitle"), T(key));
-		return;
-	}
-
-	// Keep the active tab's current docks before anything changes.
-	if (store_.autoSave)
-		captureActive();
-
-	// Docks that exist here, to report what the imported decks can't place.
-	// (placeholders don't count: they stand in for docks that are missing).
-	const QHash<QString, QDockWidget *> localDocks = realDocks();
-	QSet<QString> missingDocks;
-
-	int added = 0, replaced = 0, skipped = 0;
-	bool reapplyActive = false;
-
-	// "Do the same for the rest" remembers the answer for later clashes.
-	enum class Choice { Ask, Replace, KeepBoth, Skip };
-	Choice remembered = Choice::Ask;
-
-	for (Deck deck : file.decks) {
-		// Case-insensitive clash, matching how names are validated.
-		Deck *existing = nullptr;
-		for (Deck &l : store_.decks) {
-			if (l.name.compare(deck.name, Qt::CaseInsensitive) == 0) {
-				existing = &l;
-				break;
-			}
-		}
-
-		Choice choice = existing ? remembered : Choice::KeepBoth;
-		if (existing && choice == Choice::Ask) {
-			QMessageBox box(QMessageBox::Question, T("DockDeck.Dialog.ImportTitle"),
-					T("DockDeck.Import.Clash").arg(deck.name), QMessageBox::NoButton, main_);
-			QPushButton *replaceBtn = box.addButton(T("DockDeck.Import.Replace"), QMessageBox::AcceptRole);
-			QPushButton *keepBtn = box.addButton(T("DockDeck.Import.KeepBoth"), QMessageBox::AcceptRole);
-			QPushButton *skipBtn = box.addButton(T("DockDeck.Import.Skip"), QMessageBox::RejectRole);
-			box.setDefaultButton(keepBtn);
-			box.setEscapeButton(skipBtn);
-			auto *applyToAll = new QCheckBox(T("DockDeck.Import.ApplyToAll"), &box);
-			box.setCheckBox(applyToAll);
-			box.exec();
-
-			if (box.clickedButton() == replaceBtn)
-				choice = Choice::Replace;
-			else if (box.clickedButton() == keepBtn)
-				choice = Choice::KeepBoth;
-			else
-				choice = Choice::Skip;
-			if (applyToAll->isChecked())
-				remembered = choice;
-		}
-
-		if (choice == Choice::Skip) {
-			++skipped;
-			continue;
-		}
-
-		// Only docks this imported deck actually shows. A deck also lists
-		// docks it keeps hidden (often another deck's missing dock), and
-		// those don't matter here.
-		for (auto it = deck.docks.constBegin(); it != deck.docks.constEnd(); ++it) {
-			if (it.value() && !localDocks.contains(it.key()))
-				missingDocks.insert(deck.titles.value(it.key(), it.key()));
-		}
-
-		if (mergeImportedDeck(deck, choice == Choice::Replace, &reapplyActive))
-			++replaced;
-		else
-			++added;
-	}
-
-	// The tab you are on was replaced: show its new docks right away. Clearing
-	// active first makes switchToDeck() apply it without auto-saving over it.
-	if (reapplyActive) {
-		const QString name = store_.active;
-		store_.active.clear();
-		switchToDeck(name, SwitchSource::Import);
-	}
-
-	obs_log(LOG_INFO, "imported from %s: %d added, %d replaced, %d skipped, %d invalid", path.toUtf8().constData(),
-		added, replaced, skipped, file.invalidEntries);
-	saveConfig();
-	scheduleRefresh();
-
-	QString summary = T("DockDeck.Import.Summary").arg(added).arg(replaced).arg(skipped);
-	if (file.invalidEntries > 0)
-		summary += QStringLiteral("\n") + T("DockDeck.Import.InvalidEntries").arg(file.invalidEntries);
-	if (!missingDocks.isEmpty()) {
-		QStringList names = missingDocks.values();
-		names.sort(Qt::CaseInsensitive);
-		summary += QStringLiteral("\n\n") +
-			   T("DockDeck.Import.MissingDocks").arg(names.join(QStringLiteral(", ")));
-	}
-	QMessageBox::information(main_, T("DockDeck.Dialog.ImportTitle"), summary);
 }
