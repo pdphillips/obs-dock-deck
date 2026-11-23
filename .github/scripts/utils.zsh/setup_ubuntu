@@ -63,11 +63,22 @@ if (( ! (${skips[(Ie)all]} + ${skips[(Ie)deps]}) )) {
     return 2
   }
 
-  sudo apt-get install ${apt_args} \
-    build-essential \
-    libgles2-mesa-dev \
-    libsimde-dev \
-    obs-studio=${obs_candidate}
+  # The PPA's download server also returns 503 now and then; retry the install.
+  for attempt ({1..5}) {
+    if sudo apt-get -o Acquire::Retries=5 install ${apt_args} \
+      build-essential \
+      libgles2-mesa-dev \
+      libsimde-dev \
+      obs-studio=${obs_candidate}; then
+      break
+    fi
+    if (( attempt == 5 )) {
+      log_error 'Installing obs-studio from the OBS PPA kept failing.'
+      return 2
+    }
+    log_warning "obs-studio download failed, retry ${attempt}/5..."
+    sleep $(( attempt * 15 ))
+  }
 
   local -a _qt_packages=()
 
