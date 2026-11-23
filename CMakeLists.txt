@@ -34,6 +34,16 @@ if(ENABLE_QT)
   )
 endif()
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.cpp)
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE
+    src/plugin-main.cpp
+    src/dock-deck.cpp
+    src/dock-deck.hpp
+    src/layout-store.cpp
+    src/layout-store.hpp
+    src/tab-strip.cpp
+    src/tab-strip.hpp
+)
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})
