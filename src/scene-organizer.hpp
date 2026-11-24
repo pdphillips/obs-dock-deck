@@ -54,6 +54,7 @@ signals:
 
 protected:
 	void dropEvent(QDropEvent *event) override;
+	void changeEvent(QEvent *event) override; // theme/font change: re-measure rows
 };
 
 class SceneOrganizer : public QWidget {

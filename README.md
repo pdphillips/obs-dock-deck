@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.8.1)
+## Features (v0.8.2)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -193,6 +193,8 @@ collection's scenes, with a search box and your own folders ("groups").
   - Group items: *New Group*, *New Group Inside "…"*, *Rename Group*, *Delete
     Group (Keep Its Scenes)*, *Expand All* / *Collapse All*.
 - F2 renames the selected scene or group (renaming a scene renames it in OBS).
+  Rows are sized from the OBS theme's text box, so the rename box is fully
+  readable.
 - Drag scenes and groups to reorder them or move them into other groups
   (groups nest as deep as you like).
 - Groups are only Dock Deck's view: they never rename, reorder or change OBS
@@ -440,7 +442,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.8.1)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.8.2)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -456,6 +458,13 @@ cmake --build --preset windows-x64 --config RelWithDebInfo
 Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
+
+## Manual test checklist (0.8.2)
+
+1. Scene Organizer rows are about as tall as OBS's Scenes dock rows.
+2. F2 (or *Rename* / *Rename Group*) on a scene and a group: the edit box
+   fills the row and the text isn't clipped. Same after switching theme in
+   Settings → Appearance.
 
 ## Manual test checklist (0.8.1)
 

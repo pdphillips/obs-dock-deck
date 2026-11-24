@@ -28,6 +28,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QMessageBox>
 #include <QScreen>
 #include <QSpinBox>
+#include <QStyledItemDelegate>
 #include <QTimer>
 #include <QWidgetAction>
 #include <QFile>
@@ -45,6 +46,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QSignalBlocker>
 #include <QStyle>
 
+#include <algorithm>
 #include <functional>
 
 namespace {
@@ -145,7 +147,55 @@ QString uniqueName(const QString &format) // "<format with %1>" counting from 2
 	}
 }
 
+// Rows tall enough for a themed QLineEdit (OBS themes pad it), so renaming
+// in place is readable; measured from the theme, not a fixed pixel size.
+class RowDelegate : public QStyledItemDelegate {
+public:
+	using QStyledItemDelegate::QStyledItemDelegate;
+	int rowHeight(QWidget *view) const
+	{
+		if (height_ <= 0) {
+			QLineEdit probe(view); // inherits the view's style sheet and font
+			probe.ensurePolished();
+			const int text = view->fontMetrics().height();
+			height_ = std::max({probe.sizeHint().height(), probe.minimumHeight(), text * 3 / 2 + 6});
+		}
+		return height_;
+	}
+	void reset() { height_ = 0; }
+	QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override
+	{
+		QSize size = QStyledItemDelegate::sizeHint(option, index);
+		if (auto *view = qobject_cast<QWidget *>(parent()))
+			size.setHeight(qMax(size.height(), rowHeight(view)));
+		return size;
+	}
+	void updateEditorGeometry(QWidget *editor, const QStyleOptionViewItem &option,
+				  const QModelIndex &index) const override
+	{
+		QStyledItemDelegate::updateEditorGeometry(editor, option, index);
+		QRect r = editor->geometry(); // fill the whole row height
+		r.setTop(option.rect.top());
+		r.setHeight(option.rect.height());
+		editor->setMinimumHeight(0);
+		editor->setGeometry(r);
+	}
+
+private:
+	mutable int height_ = 0;
+};
+
 } // namespace
+
+void OrganizerTree::changeEvent(QEvent *event)
+{
+	QTreeWidget::changeEvent(event);
+	if (event->type() == QEvent::StyleChange || event->type() == QEvent::FontChange) {
+		if (auto *d = dynamic_cast<RowDelegate *>(itemDelegate()))
+			d->reset();
+		scheduleDelayedItemsLayout();
+	}
+}
 
 void OrganizerTree::dropEvent(QDropEvent *event)
 {
@@ -167,6 +217,7 @@ SceneOrganizer::SceneOrganizer(QWidget *parent) : QWidget(parent)
 
 	tree_ = new OrganizerTree(this);
 	tree_->setHeaderHidden(true);
+	tree_->setItemDelegate(new RowDelegate(tree_));
 	tree_->setDragDropMode(QAbstractItemView::InternalMove);
 	tree_->setDefaultDropAction(Qt::MoveAction);
 	tree_->setSelectionMode(QAbstractItemView::SingleSelection);
