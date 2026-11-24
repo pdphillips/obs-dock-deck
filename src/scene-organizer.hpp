@@ -24,17 +24,26 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 // by their OBS uuid, so renames need no bookkeeping; removed scenes drop out
 // and new ones appear at the bottom. Saved per scene collection in
 // plugin_config/obs-dock-deck/organizer.json.
+//
+// The right-click menu also carries OBS's own Scenes-dock actions for the
+// clicked scene (rename, duplicate, remove, filters, projectors, ...). OBS's
+// real menu acts on the scene selected in OBS's list, and selecting one
+// switches to it, so these are rebuilt on the frontend API with OBS's labels
+// and confirmations instead (Add Scene, and Remove for the scene OBS has
+// selected, still run OBS's own actions so they get OBS's undo).
 
 #include <obs-frontend-api.h>
 #include <obs.h>
 
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QSet>
 #include <QString>
 #include <QTreeWidget>
 #include <QWidget>
 
 class QLineEdit;
+class QMenu;
 
 class OrganizerTree : public QTreeWidget {
 	Q_OBJECT
@@ -66,6 +75,15 @@ public:
 	OrganizerTree *tree() const { return tree_; }
 	QJsonArray toJson() const;
 
+	// Scene actions (public for tests). Names are checked like OBS does:
+	// returns "" when fine, else the locale key prefix of the problem.
+	static QString nameProblem(obs_source_t *scene, const QString &name);
+	bool renameScene(QTreeWidgetItem *item, const QString &name);
+	bool duplicateScene(QTreeWidgetItem *item, const QString &name); // copy goes right below
+	bool removeScene(QTreeWidgetItem *item);
+	QMenu *buildMenu(QTreeWidgetItem *item, QWidget *parent);
+	bool prompts = true; // false in tests: no dialogs
+
 private:
 	static void onSourceRename(void *data, calldata_t *cd);
 	void activate(QTreeWidgetItem *item);
@@ -73,6 +91,12 @@ private:
 	void markCurrent();
 	void buildFrom(const QJsonArray &nodes, QTreeWidgetItem *parent);
 	QJsonObject readFile() const;
+	QTreeWidgetItem *findKey(const QString &key) const;
+	void addScene(QTreeWidgetItem *at);
+	void placeNew(const QSet<QString> &before, const QString &anchorKey);
+	QString askSceneName(const QString &suggestion);
+	bool warn(const QString &problem);
+	void addSceneActions(QMenu *menu, QTreeWidgetItem *item, obs_source_t *scene);
 
 	QLineEdit *search_ = nullptr;
 	OrganizerTree *tree_ = nullptr;
@@ -80,4 +104,5 @@ private:
 	QString collection_;
 	bool ready_ = false;   // OBS finished loading and no collection switch is running
 	bool syncing_ = false; // tree changes made by us, not by the user
+	obs_weak_source_t *copiedFilters_ = nullptr;
 };

@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.8.0)
+## Features (v0.8.1)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -181,12 +181,22 @@ collection's scenes, with a search box and your own folders ("groups").
   own Scenes dock). The scene OBS is showing is highlighted.
 - Type in the search box to filter by scene or group name; matching groups
   open to show what's inside. Dragging is off while searching.
-- Right-click: *New Group*, *New Group Inside "…"*, *Rename Group* (or F2),
-  *Delete Group (Keep Its Scenes)*, *Expand All* / *Collapse All*.
+- Right-click gives one menu: OBS's own Scenes-dock items for the clicked
+  scene, then the organizer's group items.
+  - On a scene: *Add Scene...*, *Duplicate...*, *Copy Filters* / *Paste
+    Filters*, *Rename*, *Remove*, *Open Scene Projector* (monitors / New
+    window), *Save Scene Screenshot*, *Filters*, *Transition Override* (and
+    its duration), *Show in Multiview*, then the group items.
+  - On a group or empty space: *Add Scene...* plus the group items. A scene
+    added from a group's menu goes into that group; a duplicate goes right
+    below the original.
+  - Group items: *New Group*, *New Group Inside "…"*, *Rename Group*, *Delete
+    Group (Keep Its Scenes)*, *Expand All* / *Collapse All*.
+- F2 renames the selected scene or group (renaming a scene renames it in OBS).
 - Drag scenes and groups to reorder them or move them into other groups
   (groups nest as deep as you like).
 - Groups are only Dock Deck's view: they never rename, reorder or change OBS
-  scenes, and OBS's own Scenes dock keeps its order. New scenes appear at the
+  scenes (only the scene actions you pick from the menu do), and OBS's own Scenes dock keeps its order. New scenes appear at the
   bottom, deleted scenes disappear, renamed scenes keep their place (scenes
   are remembered by OBS's internal scene id, not by name).
 - Saved per scene collection in `plugin_config/obs-dock-deck/organizer.json`;
@@ -196,6 +206,18 @@ collection's scenes, with a search box and your own folders ("groups").
 - Not in Deck packs: groups point at scene ids that are different in another
   collection or on another computer, so imported scenes simply appear at the
   bottom of the organizer, ready to be sorted.
+- How the scene items work: OBS's own menu acts on the scene selected in
+  OBS's Scenes list, and selecting one there switches to it (live, outside
+  Studio Mode). So the organizer runs the same actions on the clicked scene
+  directly, with OBS's labels, name checks and *Confirm Remove* dialog,
+  without switching. *Add Scene...* runs OBS's own action, as does *Remove* for
+  the scene OBS currently has selected.
+- Limits: not in the organizer menu are OBS's *Order* submenu (use drag and
+  drop) and *Grid Mode*. *Duplicate*, *Rename*, *Paste Filters* and *Remove* of
+  a scene other than the selected one don't add an *Edit → Undo* entry. Copy
+  Filters here and in OBS's own docks are separate clipboards. An open
+  Multiview picks up a *Show in Multiview* change when it next redraws its
+  layout (for example when reopened). The menu labels are English only.
 
 ## Switch fade
 
@@ -418,7 +440,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.8.0)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.8.1)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -434,6 +456,21 @@ cmake --build --preset windows-x64 --config RelWithDebInfo
 Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
+
+## Manual test checklist (0.8.1)
+
+Scene Organizer right-click menu (compare with OBS's own Scenes dock):
+1. Right-click a scene that is *not* live: OBS's items, then the group items,
+   in one menu. Nothing switches just from opening the menu.
+2. *Rename*: type a new name, Enter; OBS's Scenes dock shows it too. Rename to
+   an existing scene's name: "Name already exists", name unchanged.
+3. *Duplicate...*: the copy (same sources) appears right below the original
+   and OBS switches to it, like stock OBS.
+4. *Remove* on a non-live scene: *Confirm Remove*; Yes removes it from OBS and
+   the organizer. Live scene: OBS's own remove (Edit → Undo brings it back).
+5. *Filters*, *Save Scene Screenshot*, *Open Scene Projector → New window*,
+   *Transition Override* and *Show in Multiview* behave as in OBS's dock.
+6. Right-click a group → *Add Scene...*: the new scene lands in that group.
 
 ## Manual test checklist (0.8.0)
 
@@ -625,4 +662,5 @@ GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every pu
    (stream keys, passwords, tokens) are never included.
 6. ✅ Optional quick fade when switching Decks (off while streaming/recording by
    default, can be turned off completely).
-7. ✅ Scene Organizer dock with search and nested folders.
+7. ✅ Scene Organizer dock with search and nested folders, and OBS's scene
+   right-click actions in its menu.
