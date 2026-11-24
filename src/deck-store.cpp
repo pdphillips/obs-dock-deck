@@ -170,6 +170,11 @@ DeckStore::LoadResult DeckStore::load(const QString &path)
 	showTabStrip = root.value(QStringLiteral("showTabStrip")).toBool(true);
 	autoSave = root.value(QStringLiteral("autoSave")).toBool(true);
 	showPlaceholders = root.value(QStringLiteral("showPlaceholders")).toBool(true);
+	const QJsonObject fade = root.value(QStringLiteral("fade")).toObject();
+	fadeEnabled = fade.value(QStringLiteral("enabled")).toBool(true);
+	fadeMs = qBound(0, fade.value(QStringLiteral("ms")).toInt(150), 1000);
+	fadeMatchTransition = fade.value(QStringLiteral("matchTransition")).toBool(false);
+	fadeWhileLive = fade.value(QStringLiteral("whileLive")).toBool(false);
 
 	const QJsonArray arr = root.value(QStringLiteral("layouts")).toArray();
 	for (const QJsonValue &v : arr) {
@@ -257,6 +262,10 @@ bool DeckStore::save(const QString &path) const
 	root.insert(QStringLiteral("showTabStrip"), showTabStrip);
 	root.insert(QStringLiteral("autoSave"), autoSave);
 	root.insert(QStringLiteral("showPlaceholders"), showPlaceholders);
+	root.insert(QStringLiteral("fade"), QJsonObject{{QStringLiteral("enabled"), fadeEnabled},
+							{QStringLiteral("ms"), fadeMs},
+							{QStringLiteral("matchTransition"), fadeMatchTransition},
+							{QStringLiteral("whileLive"), fadeWhileLive}});
 	root.insert(QStringLiteral("layouts"), arr);
 
 	QSaveFile file(path);

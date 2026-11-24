@@ -19,6 +19,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "dock-deck.hpp"
 #include "deck-strip.hpp"
 #include "deck-websocket.hpp"
+#include "deck-fade.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -43,6 +44,9 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QSpinBox>
+#include <QCheckBox>
 
 // Marks our own stand-in docks so they are never mistaken for real ones.
 static constexpr const char *kPlaceholderProperty = "dockDeckPlaceholder";
@@ -284,9 +288,20 @@ bool DockDeck::switchToDeck(const QString &name, SwitchSource source)
 	if (!target)
 		return false;
 
-	// FUTURE: the optional fade hooks in here (snapshot old docks, apply,
-	// snapshot new docks, cross-fade an overlay, then remove it).
+	// Optional fade: a picture of the old docks goes on top, the new Deck is
+	// restored underneath, and the picture fades out. A switch arriving
+	// mid-fade ends the running fade and snaps straight to the new Deck.
+	const bool interrupted = fade_ && !fade_->done();
+	if (fade_)
+		fade_->snap();
+	fade_.clear();
+	const int fadeMs = interrupted ? 0 : fadeDuration(source);
+	DeckFade *fade = fadeMs > 0 ? DeckFade::begin(main_, fadeArea()) : nullptr;
 	apply(*target);
+	if (fade) {
+		fade->start(fadeMs);
+		fade_ = fade;
+	}
 	store_.active = name;
 
 	obs_log(LOG_INFO, "switched to deck '%s' (%s)", name.toUtf8().constData(), sourceName(source));
@@ -650,6 +665,8 @@ void DockDeck::onExit()
 	// Remote requests stop first: they must not queue work during teardown.
 	DeckWebsocket::shutdown();
 	signal_handler_disconnect(obs_get_signal_handler(), "source_rename", onSourceRename, this);
+	if (fade_)
+		fade_->snap();
 
 	// Dock state was already captured on the Close event; just write it out.
 	if (ready_)
@@ -822,6 +839,10 @@ void DockDeck::rebuildToolsMenu()
 	placeholders->setChecked(store_.showPlaceholders);
 	placeholders->setToolTip(T("DockDeck.Menu.Placeholders.Tooltip"));
 	connect(placeholders, &QAction::toggled, this, &DockDeck::setShowPlaceholders);
+
+	QAction *fade = toolsMenu_->addAction(T("DockDeck.Menu.Fade"));
+	fade->setToolTip(T("DockDeck.Menu.Fade.Tooltip"));
+	connect(fade, &QAction::triggered, this, &DockDeck::editFadeSettings);
 	toolsMenu_->setToolTipsVisible(true);
 }
 
@@ -1271,4 +1292,91 @@ bool DockDeck::mergeImportedDeck(Deck deck, bool replace, bool *reapplyActive)
 	store_.decks.append(deck);
 	store_.ensureIds();
 	return false;
+}
+
+// ---------------------------------------------------------------------------
+// Switch fade (the overlay itself is in deck-fade.cpp)
+// ---------------------------------------------------------------------------
+
+int DockDeck::fadeDuration(SwitchSource source) const
+{
+	if (!store_.fadeEnabled || source == SwitchSource::Startup || source == SwitchSource::Import)
+		return 0;
+	if (!main_->isVisible() || main_->isMinimized())
+		return 0;
+	if (!store_.fadeWhileLive && (obs_frontend_streaming_active() || obs_frontend_recording_active()))
+		return 0;
+	const int ms = store_.fadeMatchTransition ? obs_frontend_get_transition_duration() : store_.fadeMs;
+	return qBound(0, ms, 1000);
+}
+
+// Everything below the menu bar and the Deck tabs: docks and the central
+// area. The tabs themselves switch at once.
+QRect DockDeck::fadeArea() const
+{
+	int top = 0;
+	if (QWidget *menu = main_->menuWidget(); menu && menu->isVisible())
+		top = qMax(top, menu->geometry().bottom() + 1);
+	if (strip_ && strip_->isVisible())
+		top = qMax(top, strip_->geometry().bottom() + 1);
+	QRect area = main_->rect();
+	area.setTop(top);
+	return area;
+}
+
+void DockDeck::editFadeSettings()
+{
+	QDialog dialog(main_);
+	dialog.setWindowTitle(T("DockDeck.Fade.Title"));
+	auto *layout = new QVBoxLayout(&dialog);
+
+	auto *enabled = new QCheckBox(T("DockDeck.Fade.Enable"), &dialog);
+	enabled->setChecked(store_.fadeEnabled);
+	layout->addWidget(enabled);
+
+	auto *row = new QHBoxLayout();
+	auto *durationLabel = new QLabel(T("DockDeck.Fade.Duration"), &dialog);
+	auto *duration = new QSpinBox(&dialog);
+	duration->setRange(0, 1000);
+	duration->setSingleStep(25);
+	duration->setSuffix(QStringLiteral(" ms"));
+	duration->setValue(store_.fadeMs);
+	durationLabel->setBuddy(duration);
+	row->addWidget(durationLabel);
+	row->addWidget(duration);
+	row->addStretch(1);
+	layout->addLayout(row);
+
+	auto *match =
+		new QCheckBox(T("DockDeck.Fade.MatchTransition").arg(obs_frontend_get_transition_duration()), &dialog);
+	match->setChecked(store_.fadeMatchTransition);
+	layout->addWidget(match);
+
+	auto *live = new QCheckBox(T("DockDeck.Fade.WhileLive"), &dialog);
+	live->setChecked(store_.fadeWhileLive);
+	live->setToolTip(T("DockDeck.Fade.WhileLive.Tooltip"));
+	layout->addWidget(live);
+
+	auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+	connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+	connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+	layout->addWidget(buttons);
+
+	auto sync = [&]() {
+		match->setEnabled(enabled->isChecked());
+		live->setEnabled(enabled->isChecked());
+		duration->setEnabled(enabled->isChecked() && !match->isChecked());
+		durationLabel->setEnabled(duration->isEnabled());
+	};
+	connect(enabled, &QCheckBox::toggled, &dialog, sync);
+	connect(match, &QCheckBox::toggled, &dialog, sync);
+	sync();
+
+	if (dialog.exec() != QDialog::Accepted)
+		return;
+	store_.fadeEnabled = enabled->isChecked();
+	store_.fadeMs = duration->value();
+	store_.fadeMatchTransition = match->isChecked();
+	store_.fadeWhileLive = live->isChecked();
+	saveConfig();
 }

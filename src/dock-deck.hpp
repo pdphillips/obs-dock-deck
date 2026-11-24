@@ -37,6 +37,7 @@ class QDockWidget;
 class QMainWindow;
 class QMenu;
 class DeckStrip;
+class DeckFade;
 
 // Where a switch request came from. Only tabs/menu/startup exist today; the
 // rest are reserved so future triggers (and the optional fade) plug into
@@ -156,6 +157,13 @@ private:
 	void importPack();
 	void setTabStripVisible(bool visible);
 	void setAutoSave(bool enabled);
+
+	// Switch fade (deck-fade.cpp): how long to fade for this switch (0 = no
+	// fade), the area to cover, and the settings dialog.
+	int fadeDuration(SwitchSource source) const;
+	QRect fadeArea() const;
+	void editFadeSettings();
+	QPointer<DeckFade> fade_; // running fade, if any
 
 	// Name prompt. With `importChosen` set, the dialog also offers
 	// "Import Deck Pack..."; picking it returns an empty name

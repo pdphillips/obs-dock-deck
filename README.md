@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.6.1)
+## Features (v0.7.0)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -42,6 +42,8 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
   *(Locked)* in **Tools → Dock Deck**, and *Save Current Docks Into This Deck*
   is disabled for them (unlock first). Docks can still be shown/hidden from
   OBS's Docks menu, but on a locked Deck that isn't saved.
+- **Switch fade** (on by default): the old dock layout fades out over the new
+  one (150 ms). See [Switch fade](#switch-fade).
 - **Remember Dock Changes Per Deck** (on by default): when you move docks
   around, the active Deck keeps those changes, like pages. Turn it off if you
   only want Decks to change when you save them explicitly.
@@ -167,6 +169,32 @@ settings (folders such as an image slideshow's list are exported without
 their files); sources that come with no scene don't stay after import (OBS
 removes unused sources); packs are plain ZIP files without compression, at
 most 4 GB.
+
+## Switch fade
+
+When you switch Decks, a picture of the old dock layout is laid over the
+window, the new Deck is restored underneath at once, and the picture fades
+out. Only that picture animates: the real docks are never animated or
+re-laid-out, and OBS's preview/program and other video displays (drawn by
+OBS's graphics thread, not by the UI) are cut out of the picture, so the live
+video stays visible and rendering, streaming and recording aren't affected.
+The picture is taken by drawing the window's widgets (not a screen capture),
+so it works the same on Wayland, X11 and Windows. Taking it costs a few
+milliseconds; the fade runs on Qt's animation timer and never blocks.
+
+**Tools → Dock Deck → Switch Fade Settings...**:
+
+- *Fade when switching Decks* (default on).
+- *Duration* 0–1000 ms (default 150; 0 = no fade).
+- *Match OBS transition duration*: use the duration set in OBS's Scene
+  Transitions dock instead (capped at 1000 ms).
+- *Fade while streaming or recording* (default off): while live, Decks switch
+  instantly unless this is on.
+
+A switch that arrives during a fade (fast hotkey presses) ends the fade and
+snaps straight to the new Deck. OBS starting up and imports never fade. The
+Deck tabs and the menu bar switch immediately; floating docks are not part of
+the fade.
 
 ## Linked scenes
 
@@ -328,6 +356,7 @@ optional fade will too.
 | `src/deck-store.*` | Deck data model, config load/save, export/import file format |
 | `src/deck-hotkeys.cpp` | Frontend hotkeys and their saved bindings (`hotkeys.json`) |
 | `src/deck-websocket.*` | obs-websocket vendor `dock-deck` (requests + `DeckChanged` event) |
+| `src/deck-fade.*` | The switch fade overlay (picture of the old docks, faded out) |
 | `src/deck-pack.*` | Deck pack export/import dialogs, background copying |
 | `src/pack-core.*` | Pack contents: scanning scenes/sources/media, secret scrubbing, re-creating sources |
 | `src/pack-zip.*` | Minimal ZIP (stored) writer/reader with CRC checks |
@@ -361,7 +390,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.6.1)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.7.0)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -377,6 +406,24 @@ cmake --build --preset windows-x64 --config RelWithDebInfo
 Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
+
+## Manual test checklist (0.7.0)
+
+Switch fade:
+1. Click between two Decks with different layouts: the old layout fades into
+   the new one (about 150 ms). The preview keeps playing during the fade with
+   no black box, and the tabs switch immediately.
+2. Tools → Dock Deck → *Switch Fade Settings...*: set 1000 ms to see it
+   clearly, then back. 0 ms or unticking *Fade when switching Decks* switches
+   instantly.
+3. Hammer Next/Previous Deck hotkeys: no flicker build-up; a switch during a
+   fade snaps to the new Deck.
+4. Tick *Match OBS transition duration*: the fade follows the duration in the
+   Scene Transitions dock (try 300 ms vs 1000 ms).
+5. Start recording (or streaming): switching is instant. Tick *Fade while
+   streaming or recording*: it fades again. Check the recording/stream has no
+   dropped or lagged frames in the Stats dock while switching.
+6. Restart OBS: settings are kept, and startup doesn't fade.
 
 ## Manual test checklist (0.6.1)
 
@@ -530,6 +577,6 @@ GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every pu
    purchased overlays) imports as an empty, unpointed source for the user to
    fill in. Plugins the pack needs but that are missing are listed. Secrets
    (stream keys, passwords, tokens) are never included.
-6. Optional quick fade when switching Decks (off while streaming/recording by
+6. ✅ Optional quick fade when switching Decks (off while streaming/recording by
    default, can be turned off completely).
 7. Scene Organizer dock with search and nested folders.

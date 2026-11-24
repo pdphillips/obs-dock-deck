@@ -53,6 +53,8 @@ target_sources(
     src/pack-core.hpp
     src/deck-pack.cpp
     src/deck-pack.hpp
+    src/deck-fade.cpp
+    src/deck-fade.hpp
     src/obs-websocket-api.h
 )
 

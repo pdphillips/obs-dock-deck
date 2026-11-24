@@ -106,4 +106,10 @@ public:
 	bool showTabStrip = true;     // tab strip under the menu bar
 	bool autoSave = true;         // keep dock changes in the active deck
 	bool showPlaceholders = true; // stand-in panels for docks missing here
+
+	// Switch fade (see deck-fade.hpp).
+	bool fadeEnabled = true;
+	int fadeMs = 150;                 // 0..1000
+	bool fadeMatchTransition = false; // use OBS's transition duration instead
+	bool fadeWhileLive = false;       // also fade while streaming/recording
 };
