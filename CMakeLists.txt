@@ -55,6 +55,8 @@ target_sources(
     src/deck-pack.hpp
     src/deck-fade.cpp
     src/deck-fade.hpp
+    src/scene-organizer.cpp
+    src/scene-organizer.hpp
     src/obs-websocket-api.h
 )
 

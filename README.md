@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.7.0)
+## Features (v0.8.0)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -42,6 +42,8 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
   *(Locked)* in **Tools → Dock Deck**, and *Save Current Docks Into This Deck*
   is disabled for them (unlock first). Docks can still be shown/hidden from
   OBS's Docks menu, but on a locked Deck that isn't saved.
+- **Scene Organizer** dock: search your scenes and sort them into nested
+  folders. See [Scene Organizer](#scene-organizer).
 - **Switch fade** (on by default): the old dock layout fades out over the new
   one (150 ms). See [Switch fade](#switch-fade).
 - **Remember Dock Changes Per Deck** (on by default): when you move docks
@@ -169,6 +171,31 @@ settings (folders such as an image slideshow's list are exported without
 their files); sources that come with no scene don't stay after import (OBS
 removes unused sources); packs are plain ZIP files without compression, at
 most 4 GB.
+
+## Scene Organizer
+
+**Docks → Scene Organizer** adds a dock listing the current scene
+collection's scenes, with a search box and your own folders ("groups").
+
+- Click a scene to switch to it (in Studio Mode it goes to Preview, like OBS's
+  own Scenes dock). The scene OBS is showing is highlighted.
+- Type in the search box to filter by scene or group name; matching groups
+  open to show what's inside. Dragging is off while searching.
+- Right-click: *New Group*, *New Group Inside "…"*, *Rename Group* (or F2),
+  *Delete Group (Keep Its Scenes)*, *Expand All* / *Collapse All*.
+- Drag scenes and groups to reorder them or move them into other groups
+  (groups nest as deep as you like).
+- Groups are only Dock Deck's view: they never rename, reorder or change OBS
+  scenes, and OBS's own Scenes dock keeps its order. New scenes appear at the
+  bottom, deleted scenes disappear, renamed scenes keep their place (scenes
+  are remembered by OBS's internal scene id, not by name).
+- Saved per scene collection in `plugin_config/obs-dock-deck/organizer.json`;
+  switching collections shows that collection's groups, and renaming a
+  collection keeps them.
+- It's a normal OBS dock, so Decks can show, hide and place it like any other.
+- Not in Deck packs: groups point at scene ids that are different in another
+  collection or on another computer, so imported scenes simply appear at the
+  bottom of the organizer, ready to be sorted.
 
 ## Switch fade
 
@@ -356,6 +383,7 @@ optional fade will too.
 | `src/deck-store.*` | Deck data model, config load/save, export/import file format |
 | `src/deck-hotkeys.cpp` | Frontend hotkeys and their saved bindings (`hotkeys.json`) |
 | `src/deck-websocket.*` | obs-websocket vendor `dock-deck` (requests + `DeckChanged` event) |
+| `src/scene-organizer.*` | Scene Organizer dock (search, nested groups, `organizer.json`) |
 | `src/deck-fade.*` | The switch fade overlay (picture of the old docks, faded out) |
 | `src/deck-pack.*` | Deck pack export/import dialogs, background copying |
 | `src/pack-core.*` | Pack contents: scanning scenes/sources/media, secret scrubbing, re-creating sources |
@@ -390,7 +418,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.7.0)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.8.0)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -406,6 +434,24 @@ cmake --build --preset windows-x64 --config RelWithDebInfo
 Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
+
+## Manual test checklist (0.8.0)
+
+Scene Organizer:
+1. **Docks → Scene Organizer**: all scenes are listed in OBS's order; the
+   current one is highlighted.
+2. Right-click → *New Group*, name it, drag two scenes into it; create a group
+   inside it and drag a scene there. Drag a group above another scene.
+3. Click scenes: OBS switches. Turn on Studio Mode: clicks change Preview only.
+4. Type part of a name in the search box: only matches (and their groups)
+   show. Search a group's name: its scenes show. Clear: back to normal,
+   collapsed groups stay collapsed.
+5. Rename a scene in OBS's Scenes dock: same place, new name. Add a scene: it
+   appears at the bottom. Delete one: it disappears. OBS's own Scenes dock
+   order and names never change because of the organizer.
+6. Switch to another scene collection and back: each has its own groups.
+   Restart OBS: groups, order and collapsed state are kept.
+7. *Delete Group (Keep Its Scenes)*: its scenes and subgroups move up a level.
 
 ## Manual test checklist (0.7.0)
 
@@ -579,4 +625,4 @@ GitHub Actions builds Ubuntu 26.04 and Windows (`.github/workflows`) on every pu
    (stream keys, passwords, tokens) are never included.
 6. ✅ Optional quick fade when switching Decks (off while streaming/recording by
    default, can be turned off completely).
-7. Scene Organizer dock with search and nested folders.
+7. ✅ Scene Organizer dock with search and nested folders.

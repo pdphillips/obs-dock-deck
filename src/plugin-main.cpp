@@ -20,6 +20,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "deck-websocket.hpp"
 #include "dock-deck.hpp"
+#include "scene-organizer.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -34,6 +35,8 @@ OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 // Owned by the OBS main window (Qt parent), so Qt deletes it with the window.
 // QPointer turns into nullptr if that already happened before unload.
 static QPointer<DockDeck> g_deck;
+// The Scene Organizer dock's widget, owned by OBS once added as a dock.
+static QPointer<SceneOrganizer> g_organizer;
 
 const char *obs_module_name(void)
 {
@@ -47,6 +50,8 @@ const char *obs_module_description(void)
 
 static void on_frontend_event(enum obs_frontend_event event, void *)
 {
+	if (g_organizer && event != OBS_FRONTEND_EVENT_EXIT)
+		g_organizer->onFrontendEvent(event);
 	if (!g_deck)
 		return;
 
@@ -72,6 +77,13 @@ bool obs_module_load(void)
 	}
 
 	g_deck = new DockDeck(main_window);
+
+	auto *organizer = new SceneOrganizer();
+	if (obs_frontend_add_dock_by_id("dock-deck-scene-organizer", obs_module_text("DockDeck.Organizer.Title"),
+					organizer))
+		g_organizer = organizer;
+	else
+		delete organizer;
 	obs_frontend_add_event_callback(on_frontend_event, nullptr);
 
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
