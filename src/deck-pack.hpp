@@ -40,9 +40,9 @@ class QTreeWidget;
 class QTreeWidgetItem;
 
 struct PackItem {
-	enum Kind { Deck, Scene, Source, Media };
+	enum Kind { Deck, Scene, Source, Media, Organizer };
 	Kind kind = Deck;
-	QString key; // "d:<deck>", "s:<scene or source>", "m:<media index>"
+	QString key; // "d:<deck>", "s:<scene or source>", "m:<media index>", "o:" organizer folders
 	QString label;
 	QString detail;
 	QString tooltip;

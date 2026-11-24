@@ -187,6 +187,13 @@ private:
 
 } // namespace
 
+static QPointer<SceneOrganizer> s_instance;
+
+SceneOrganizer *SceneOrganizer::instance()
+{
+	return s_instance;
+}
+
 void OrganizerTree::changeEvent(QEvent *event)
 {
 	QTreeWidget::changeEvent(event);
@@ -206,6 +213,7 @@ void OrganizerTree::dropEvent(QDropEvent *event)
 SceneOrganizer::SceneOrganizer(QWidget *parent) : QWidget(parent)
 {
 	setObjectName(QStringLiteral("dockDeckSceneOrganizer"));
+	s_instance = this;
 	auto *layout = new QVBoxLayout(this);
 	layout->setContentsMargins(0, 0, 0, 0);
 	layout->setSpacing(2);
@@ -890,4 +898,129 @@ void SceneOrganizer::showMenu(const QPoint &pos)
 	QMenu *menu = buildMenu(tree_->itemAt(pos), this);
 	menu->exec(tree_->viewport()->mapToGlobal(pos));
 	delete menu;
+}
+
+// ---------------------------------------------------------------------------
+// Deck packs
+// ---------------------------------------------------------------------------
+
+static QJsonArray packNodes(const QTreeWidgetItem *parent)
+{
+	QJsonArray out;
+	for (int i = 0; i < parent->childCount(); ++i) {
+		const QTreeWidgetItem *item = parent->child(i);
+		if (isGroup(item))
+			out.append(QJsonObject{{QStringLiteral("group"), item->text(0)},
+					       {QStringLiteral("open"), item->data(0, OpenRole).toBool()},
+					       {QStringLiteral("items"), packNodes(item)}});
+		else
+			out.append(QJsonObject{{QStringLiteral("scene"), item->text(0)},
+					       {QStringLiteral("id"), item->data(0, KeyRole).toString()}});
+	}
+	return out;
+}
+
+QJsonArray SceneOrganizer::packTree() const
+{
+	return groupCount() ? packNodes(tree_->invisibleRootItem()) : QJsonArray();
+}
+
+int SceneOrganizer::groupCount() const
+{
+	QVector<QTreeWidgetItem *> items;
+	allItems(tree_->invisibleRootItem(), &items);
+	return int(std::count_if(items.begin(), items.end(), [](QTreeWidgetItem *i) { return isGroup(i); }));
+}
+
+// Merges a pack's tree into this collection. Scenes are found by name
+// (following import renames), then by the id hint (same collection, renamed
+// since); missing ones are skipped. A group reuses a same-named group at the
+// same level, so importing twice doesn't duplicate folders (what's already in
+// it stays put, new things are added at its end); your own groups
+// and their order stay, and imported items go after them (new top-level items
+// go after your last top-level group, above loose scenes). Groups that end up
+// empty only because their scenes are missing are dropped.
+SceneOrganizer::PackImport SceneOrganizer::importPackTree(const QJsonArray &nodes,
+							  const QHash<QString, QString> &renamed)
+{
+	PackImport result;
+	refresh(); // scenes the import just created
+	if (!ready_ || nodes.isEmpty())
+		return result;
+
+	std::function<void(const QJsonArray &, QTreeWidgetItem *, int, bool)> place = [&](const QJsonArray &list,
+											  QTreeWidgetItem *parent,
+											  int cursor, bool merging) {
+		auto put = [&](QTreeWidgetItem *item) {
+			if (merging && item->parent() == parent)
+				return; // already in this existing group: leave it where it is
+			if (QTreeWidgetItem *from = item->parent() ? item->parent() : tree_->invisibleRootItem()) {
+				const int at = from->indexOfChild(item);
+				if (from == parent && at < cursor)
+					--cursor;
+				from->removeChild(item);
+			}
+			parent->insertChild(qMin(cursor, parent->childCount()), item);
+			++cursor;
+		};
+		for (const QJsonValue &v : list) {
+			const QJsonObject o = v.toObject();
+			if (o.contains(QStringLiteral("group"))) {
+				const QString name = o.value(QStringLiteral("group")).toString();
+				const QJsonArray items = o.value(QStringLiteral("items")).toArray();
+				QTreeWidgetItem *group = nullptr;
+				for (int i = 0; i < parent->childCount() && !group; ++i)
+					if (isGroup(parent->child(i)) && parent->child(i)->text(0) == name)
+						group = parent->child(i);
+				if (group) {
+					place(items, group, group->childCount(), true);
+					continue;
+				}
+				group = addGroup(name, parent == tree_->invisibleRootItem() ? nullptr : parent);
+				put(group);
+				const bool open = o.value(QStringLiteral("open")).toBool(true);
+				group->setData(0, OpenRole, open);
+				place(items, group, 0, false);
+				if (group->childCount() == 0 && !items.isEmpty()) {
+					--cursor;
+					delete group;
+				} else {
+					++result.newGroups;
+				}
+				continue;
+			}
+			QString name = o.value(QStringLiteral("scene")).toString();
+			name = renamed.value(name, name);
+			QTreeWidgetItem *item = nullptr;
+			if (obs_source_t *s = obs_get_source_by_name(name.toUtf8().constData())) {
+				if (obs_source_is_scene(s))
+					item = findKey(QString::fromUtf8(obs_source_get_uuid(s)));
+				obs_source_release(s);
+			}
+			if (!item) {
+				QTreeWidgetItem *hint = findKey(o.value(QStringLiteral("id")).toString());
+				item = hint && !isGroup(hint) ? hint : nullptr;
+			}
+			if (!item) {
+				if (!name.isEmpty() && !result.missing.contains(name))
+					result.missing.append(name);
+				continue;
+			}
+			put(item);
+			++result.placed;
+		}
+	};
+
+	syncing_ = true;
+	QTreeWidgetItem *root = tree_->invisibleRootItem();
+	int cursor = 0;
+	for (int i = 0; i < root->childCount(); ++i)
+		if (isGroup(root->child(i)))
+			cursor = i + 1;
+	place(nodes, root, cursor, false);
+	syncing_ = false;
+	setFilter(search_->text()); // also restores each group's open state
+	markCurrent();
+	save();
+	return result;
 }

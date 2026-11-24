@@ -22,6 +22,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 
 #include "deck-pack.hpp"
 #include "dock-deck.hpp"
+#include "scene-organizer.hpp"
 
 #include <obs-frontend-api.h>
 #include <obs-module.h>
@@ -110,7 +111,7 @@ PackDialog::PackDialog(bool importing, const QString &title, const QString &intr
 	layout->addWidget(tree_, 1);
 
 	const char *groupKeys[] = {"DockDeck.Pack.Decks", "DockDeck.Pack.Scenes", "DockDeck.Pack.Sources",
-				   "DockDeck.Pack.Media"};
+				   "DockDeck.Pack.Media", "DockDeck.Pack.Organizer"};
 	for (const char *key : groupKeys) {
 		auto *group = new QTreeWidgetItem(tree_, {T(key)});
 		group->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable | Qt::ItemIsAutoTristate);
@@ -352,6 +353,28 @@ static QString deckDetail(const Deck &deck, const QString &scene)
 	return parts.join(QStringLiteral(" · "));
 }
 
+static int countGroups(const QJsonArray &nodes)
+{
+	int n = 0;
+	for (const QJsonValue &v : nodes) {
+		const QJsonObject o = v.toObject();
+		if (o.contains(QStringLiteral("group")))
+			n += 1 + countGroups(o.value(QStringLiteral("items")).toArray());
+	}
+	return n;
+}
+
+static PackItem organizerItem(int groups)
+{
+	PackItem it;
+	it.kind = PackItem::Organizer;
+	it.key = QStringLiteral("o:");
+	it.label = T("DockDeck.Pack.OrganizerItem");
+	it.detail = T("DockDeck.Pack.OrganizerDetail").arg(groups);
+	it.checked = true;
+	return it;
+}
+
 static QString summarize(const QStringList &list, int max = 12)
 {
 	QStringList shown = list.mid(0, max);
@@ -406,6 +429,9 @@ void DockDeck::exportPack(const QString &onlyName)
 		it.size = m.size;
 		items.append(it);
 	}
+	SceneOrganizer *organizer = SceneOrganizer::instance();
+	if (organizer && organizer->groupCount() > 0)
+		items.append(organizerItem(organizer->groupCount()));
 
 	PackDialog dialog(false, T("DockDeck.Pack.ExportTitle"), T("DockDeck.Pack.ExportIntro"), items, main_);
 	if (dialog.exec() != QDialog::Accepted)
@@ -426,8 +452,9 @@ void DockDeck::exportPack(const QString &onlyName)
 	}
 
 	const QString title = T("DockDeck.Pack.ExportTitle");
-	const PackCore::ExportResult result = PackCore::buildExport(inv, decks, names, media, collection,
-								    QStringLiteral("Dock Deck ") + PLUGIN_VERSION);
+	const QJsonArray tree = organizer && keys.contains(QStringLiteral("o:")) ? organizer->packTree() : QJsonArray();
+	const PackCore::ExportResult result = PackCore::buildExport(
+		inv, decks, names, media, collection, QStringLiteral("Dock Deck ") + PLUGIN_VERSION, tree);
 	if (result.mediaBytes > PackZip::kMaxArchiveBytes) {
 		QMessageBox::warning(main_, title, T("DockDeck.Pack.TooBig").arg(sizeText(result.mediaBytes)));
 		return;
@@ -562,6 +589,8 @@ void DockDeck::importPack()
 		it.checked = true;
 		items.append(it);
 	}
+	if (!pack.organizer.isEmpty() && SceneOrganizer::instance())
+		items.append(organizerItem(countGroups(pack.organizer)));
 
 	PackDialog dialog(true, title, T("DockDeck.Pack.ImportIntro").arg(QFileInfo(path).fileName()), items, main_);
 	if (dialog.exec() != QDialog::Accepted)
@@ -680,6 +709,12 @@ void DockDeck::importPack()
 	}
 	saveConfig();
 	scheduleRefresh();
+
+	// Scene Organizer folders, merged into this collection's (scenes by name).
+	SceneOrganizer::PackImport folders;
+	const bool importFolders = keys.contains(QStringLiteral("o:")) && SceneOrganizer::instance();
+	if (importFolders)
+		folders = SceneOrganizer::instance()->importPackTree(pack.organizer, res.renamed);
 	obs_frontend_save();
 
 	obs_log(LOG_INFO, "imported pack %s: decks %d added, %d replaced, %d skipped; %d scene/source(s) created",
@@ -705,6 +740,13 @@ void DockDeck::importPack()
 		names.sort(Qt::CaseInsensitive);
 		summary += QStringLiteral("\n\n") +
 			   T("DockDeck.Import.MissingDocks").arg(names.join(QStringLiteral(", ")));
+	}
+	if (importFolders) {
+		summary += QStringLiteral("\n\n") +
+			   T("DockDeck.Pack.OrganizerImported").arg(folders.newGroups).arg(folders.placed);
+		if (!folders.missing.isEmpty())
+			summary += QStringLiteral("\n") + T("DockDeck.Pack.OrganizerMissing") + QStringLiteral("\n") +
+				   summarize(folders.missing);
 	}
 	QMessageBox::information(main_, title, summary);
 }

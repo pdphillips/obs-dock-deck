@@ -405,7 +405,8 @@ QSet<QString> PackCore::closure(const QVector<Source> &scenes, const QVector<Sou
 
 PackCore::ExportResult PackCore::buildExport(const Inventory &inv, const QVector<Deck> &decks,
 					     const QSet<QString> &names, const QSet<int> &media,
-					     const QString &collection, const QString &generator)
+					     const QString &collection, const QString &generator,
+					     const QJsonArray &organizer)
 {
 	ExportResult result;
 	QJsonArray scenesArr, sourcesArr, mediaArr, unpointedArr;
@@ -467,7 +468,7 @@ PackCore::ExportResult PackCore::buildExport(const Inventory &inv, const QVector
 	for (const Deck &d : decks)
 		decksArr.append(DeckFile::toJson(d));
 
-	const QJsonObject manifest{
+	QJsonObject manifest{
 		{QStringLiteral("format"), QStringLiteral("dock-deck-pack")},
 		{QStringLiteral("version"), kFormatVersion},
 		{QStringLiteral("generator"), generator},
@@ -479,6 +480,8 @@ PackCore::ExportResult PackCore::buildExport(const Inventory &inv, const QVector
 		{QStringLiteral("unpointed"), unpointedArr},
 		{QStringLiteral("stripped"), toArray(result.stripped)},
 	};
+	if (!organizer.isEmpty())
+		manifest.insert(QStringLiteral("organizer"), organizer);
 	result.manifest = QJsonDocument(manifest).toJson(QJsonDocument::Indented);
 	result.entries.prepend({QStringLiteral("manifest.json"), result.manifest, QString()});
 	return result;
@@ -504,6 +507,7 @@ bool PackCore::readPack(const PackZip::Reader &reader, Pack *pack, QString *erro
 
 	*pack = Pack();
 	pack->collection = m.value(QStringLiteral("collection")).toString();
+	pack->organizer = m.value(QStringLiteral("organizer")).toArray();
 	for (const QJsonValue &v : m.value(QStringLiteral("decks")).toArray()) {
 		Deck d;
 		if (pack->decks.size() < 500 && DeckFile::fromJson(v, &d))

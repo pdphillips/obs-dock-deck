@@ -35,6 +35,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-frontend-api.h>
 #include <obs.h>
 
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
@@ -75,6 +76,18 @@ public:
 	void loadCollection(); // (re)load groups for the current collection
 	OrganizerTree *tree() const { return tree_; }
 	QJsonArray toJson() const;
+	static SceneOrganizer *instance(); // the dock, if loaded
+
+	// Deck packs: the tree with scenes by name ({"scene":name,"id":uuid hint}),
+	// and merging such a tree into this collection (see the .cpp).
+	QJsonArray packTree() const;
+	int groupCount() const;
+	struct PackImport {
+		int newGroups = 0;
+		int placed = 0;
+		QStringList missing; // scenes not in this collection
+	};
+	PackImport importPackTree(const QJsonArray &nodes, const QHash<QString, QString> &renamed);
 
 	// Scene actions (public for tests). Names are checked like OBS does:
 	// returns "" when fine, else the locale key prefix of the problem.

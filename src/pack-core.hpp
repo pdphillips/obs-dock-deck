@@ -27,6 +27,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "pack-zip.hpp"
 
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QSet>
 #include <QString>
@@ -88,10 +89,12 @@ struct ExportResult {
 	qint64 mediaBytes = 0;
 };
 ExportResult buildExport(const Inventory &inv, const QVector<Deck> &decks, const QSet<QString> &names,
-			 const QSet<int> &media, const QString &collection, const QString &generator);
+			 const QSet<int> &media, const QString &collection, const QString &generator,
+			 const QJsonArray &organizer = {}); // Scene Organizer tree (by scene name)
 
 struct Pack {
-	QString collection; // scene collection the pack was made from
+	QString collection;   // scene collection the pack was made from
+	QJsonArray organizer; // Scene Organizer tree; empty in older packs
 	QVector<Deck> decks;
 	QVector<Source> scenes;
 	QVector<Source> sources;

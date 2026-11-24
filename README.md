@@ -13,7 +13,7 @@ with the macOS bits removed. The Qt6 frontend API (`ENABLE_FRONTEND_API`, `ENABL
 - **Deck**: one named dock arrangement, shown as one tab under the menu bar.
 - **Deck Collection**: all of your Decks together.
 
-## Features (v0.8.2)
+## Features (v0.8.3)
 
 - **Decks**: a Deck is a named snapshot of OBS's docks: where every dock sits
   (`QMainWindow::saveState()`), which docks are shown or hidden, and each dock's
@@ -149,6 +149,19 @@ one"), sources renamed because of a clash, and source types whose plugin isn't
 installed. Decks keep their lock state and their linked scene; the link
 follows a renamed scene and is set for the scene collection you import into.
 
+**Scene Organizer folders** are a row of their own in both checklists
+(checked by default, shown when there are folders). The pack stores the folder
+tree (folders, nesting, order, open/closed) with scenes by name. On import the
+folders are rebuilt and scenes are matched by name (following " (2)" renames;
+a scene renamed since export in the same collection is still found by its id).
+The import merges into the folders you already have: a folder with the same
+name at the same level is reused rather than duplicated (what's already in it
+stays put, new things go at its end), new folders go after your last top-level
+folder, and scenes the pack doesn't mention stay where they are, loose ones at
+the bottom. Scenes the pack mentions that aren't in this collection are
+skipped and listed in the summary; a folder left empty only because of that is
+not created. Packs made before 0.8.3 just have no folder row.
+
 ### What is never in a pack
 
 - Any setting whose name contains a word like *password*, *passwd*, *pwd*,
@@ -205,9 +218,8 @@ collection's scenes, with a search box and your own folders ("groups").
   switching collections shows that collection's groups, and renaming a
   collection keeps them.
 - It's a normal OBS dock, so Decks can show, hide and place it like any other.
-- Not in Deck packs: groups point at scene ids that are different in another
-  collection or on another computer, so imported scenes simply appear at the
-  bottom of the organizer, ready to be sorted.
+- Deck packs can carry the folders (scenes matched by name on import); see
+  [Deck packs](#deck-packs).
 - How the scene items work: OBS's own menu acts on the scene selected in
   OBS's Scenes list, and selecting one there switches to it (live, outside
   Studio Mode). So the organizer runs the same actions on the clicked scene
@@ -407,7 +419,8 @@ optional fade will too.
 | `src/deck-store.*` | Deck data model, config load/save, export/import file format |
 | `src/deck-hotkeys.cpp` | Frontend hotkeys and their saved bindings (`hotkeys.json`) |
 | `src/deck-websocket.*` | obs-websocket vendor `dock-deck` (requests + `DeckChanged` event) |
-| `src/scene-organizer.*` | Scene Organizer dock (search, nested groups, `organizer.json`) |
+| `src/scene-organizer.*` | Scene Organizer dock (search, nested groups, `organizer.json`, pack folders) |
+| `tests/organizer/` | Headless organizer + pack-folders test (instructions in its CMakeLists.txt) |
 | `src/deck-fade.*` | The switch fade overlay (picture of the old docks, faded out) |
 | `src/deck-pack.*` | Deck pack export/import dialogs, background copying |
 | `src/pack-core.*` | Pack contents: scanning scenes/sources/media, secret scrubbing, re-creating sources |
@@ -442,7 +455,7 @@ Restart OBS, then check the newest log:
 grep -h 'obs-dock-deck' "$(ls -t ~/.config/obs-studio/logs/*.txt | head -1)"
 ```
 
-You should see `[obs-dock-deck] plugin loaded successfully (version 0.8.2)`,
+You should see `[obs-dock-deck] plugin loaded successfully (version 0.8.3)`,
 and the Deck tabs should appear under the menu bar.
 
 ## Build on Windows
@@ -458,6 +471,16 @@ cmake --build --preset windows-x64 --config RelWithDebInfo
 Copy the built `obs-dock-deck.dll` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\` (OBS 33+ layout; the old `bin\64bit` folder is flagged Legacy) and `data\` to
 `C:\ProgramData\obs-studio\plugins\obs-dock-deck\data\`.
+
+## Manual test checklist (0.8.3)
+
+1. Tools → Dock Deck → *Export Deck Pack...*: a *Scene Organizer* group with
+   *Scene Organizer folders* (checked, "N folder(s)"). Export.
+2. Import that pack on another PC or into an empty scene collection: the
+   folders come back with the same nesting, order and open/closed state; the
+   summary says how many folders and scenes, and lists scenes not found.
+3. Import it again: no duplicate folders.
+4. Import a pack made with 0.8.2 or older: works, no folder row.
 
 ## Manual test checklist (0.8.2)
 
